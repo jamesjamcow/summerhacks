@@ -3,13 +3,18 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
-type ArenaGameProps = { projectileImageUrl?: string; characterImageUrl?: string };
-type ViewMode = "first" | "third";
+import { getPreloadedArenaImage } from "./arena-assets";
+import type { ArenaItem } from "./arena-types";
+
+type ArenaGameProps = {
+  active: boolean;
+  characterImageUrl?: string;
+  item?: ArenaItem;
+  onOpponentHit: () => void;
+};
 const PLAYER_HEIGHT = 1.65;
 const PLAYER_RADIUS = 0.36;
 const MOVE_SPEED = 6.2;
-const THIRD_PERSON_DISTANCE = 4.4;
-const THIRD_PERSON_HEIGHT = 1.5;
 
 function makeCardTexture() {
   const canvas = document.createElement("canvas");
@@ -24,19 +29,25 @@ function makeCardTexture() {
   return texture;
 }
 
-export default function ArenaGame({ projectileImageUrl, characterImageUrl }: ArenaGameProps) {
+export default function ArenaGame({ active, characterImageUrl, item, onOpponentHit }: ArenaGameProps) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const activeRef = useRef(active);
+  const hitHandlerRef = useRef(onOpponentHit);
   const [locked, setLocked] = useState(false);
-  const [score, setScore] = useState(0);
   const [throws, setThrows] = useState(12);
   const [hitFlash, setHitFlash] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("first");
-  const toggleViewRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    activeRef.current = active;
+    if (!active && document.pointerLockElement) document.exitPointerLock();
+  }, [active]);
+
+  useEffect(() => { hitHandlerRef.current = onOpponentHit; }, [onOpponentHit]);
 
   useEffect(() => {
     const mount = mountRef.current; if (!mount) return;
     const scene = new THREE.Scene(); scene.background = new THREE.Color("#86c8d4"); scene.fog = new THREE.Fog("#86c8d4", 18, 48);
-    const camera = new THREE.PerspectiveCamera(72, 1, 0.05, 90);
+    const camera = new THREE.PerspectiveCamera(72, 1, 0.05, 90); camera.position.set(0, PLAYER_HEIGHT, 9);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; mount.appendChild(renderer.domElement);
     scene.add(new THREE.HemisphereLight("#d9fbff", "#70554a", 2.2));
@@ -54,59 +65,31 @@ export default function ArenaGame({ projectileImageUrl, characterImageUrl }: Are
     const targets: THREE.Mesh[]=[];
     [[-8,1.2,-3],[10,1.2,7],[4,1.2,-11],[-11,1.2,8]].forEach(([x,y,z])=>{ const target=new THREE.Mesh(new THREE.IcosahedronGeometry(.72,1),new THREE.MeshStandardMaterial({color:"#ff5a54",emissive:"#5d0909",flatShading:true})); target.position.set(x,y,z); target.castShadow=true; scene.add(target); targets.push(target); });
     let projectileTexture: THREE.Texture=makeCardTexture();
-    if(projectileImageUrl) new THREE.TextureLoader().load(projectileImageUrl,(loaded)=>{ loaded.colorSpace=THREE.SRGBColorSpace; projectileTexture.dispose(); projectileTexture=loaded; });
-
-    // The player's own ground position, independent of the camera: in first
-    // person the camera sits at head height above it; in third person the
-    // camera orbits behind it so the player's character is visible.
-    const playerPosition = new THREE.Vector3(0, 0, 9);
-    let currentView: ViewMode = "first";
-    let avatarSprite: THREE.Sprite | null = null;
-    if (characterImageUrl) {
-      const avatarTexture = new THREE.TextureLoader().load(characterImageUrl, (loaded) => { loaded.colorSpace = THREE.SRGBColorSpace; });
-      avatarSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: avatarTexture, transparent: true }));
-      avatarSprite.scale.set(1.7, 2.3, 1);
-      avatarSprite.visible = false;
-      scene.add(avatarSprite);
-    }
-    const toggleView = () => {
-      if (!avatarSprite) return; // no avatar generated yet: third person has nothing to show
-      currentView = currentView === "first" ? "third" : "first";
-      setViewMode(currentView);
-    };
-    toggleViewRef.current = toggleView;
-
+    const preloadedImage = item?.imageUrl ? getPreloadedArenaImage(item.imageUrl) : undefined;
+    if(preloadedImage){const loaded=new THREE.Texture(preloadedImage);loaded.needsUpdate=true;loaded.colorSpace=THREE.SRGBColorSpace;projectileTexture.dispose();projectileTexture=loaded;}
     const keys=new Set<string>(); const projectiles:{mesh:THREE.Mesh;velocity:THREE.Vector3;life:number}[]=[]; const clock=new THREE.Clock(); let yaw=0; let pitch=0; let ammo=12;
     const resize=()=>{ const {clientWidth,clientHeight}=mount; renderer.setSize(clientWidth,clientHeight,false); camera.aspect=clientWidth/Math.max(clientHeight,1); camera.updateProjectionMatrix(); }; resize();
-    const onKeyDown=(event:KeyboardEvent)=>{ keys.add(event.code); if(event.code==="KeyV") toggleView(); };
-    const onKeyUp=(event:KeyboardEvent)=>keys.delete(event.code);
+    const onKeyDown=(event:KeyboardEvent)=>keys.add(event.code); const onKeyUp=(event:KeyboardEvent)=>keys.delete(event.code);
     const onPointerLock=()=>setLocked(document.pointerLockElement===renderer.domElement);
     const onMouseMove=(event:MouseEvent)=>{ if(document.pointerLockElement!==renderer.domElement)return; yaw-=event.movementX*.0022; pitch=THREE.MathUtils.clamp(pitch-event.movementY*.002,-1.35,1.35); };
-    const shoot=(event:MouseEvent)=>{ if(document.pointerLockElement!==renderer.domElement){renderer.domElement.requestPointerLock();return;} if(event.button!==0)return; if(ammo<=0){ammo=12;setThrows(ammo);return;} ammo-=1;setThrows(ammo);
-      const card=new THREE.Mesh(new THREE.PlaneGeometry(.72,.72),new THREE.MeshBasicMaterial({map:projectileTexture,side:THREE.DoubleSide,transparent:true}));
-      const hand=new THREE.Vector3(playerPosition.x,playerPosition.y+PLAYER_HEIGHT,playerPosition.z);
-      card.position.copy(hand); const direction=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize(); card.position.addScaledVector(direction,.65);scene.add(card);projectiles.push({mesh:card,velocity:direction.multiplyScalar(18),life:2.5}); };
+    const requestLock=()=>{void renderer.domElement.requestPointerLock().catch(()=>undefined);};
+    const shoot=(event:MouseEvent)=>{ if(!activeRef.current)return; if(document.pointerLockElement!==renderer.domElement){requestLock();return;} if(event.button!==0)return; if(ammo<=0){ammo=12;setThrows(ammo);return;} ammo-=1;setThrows(ammo);
+      const card=new THREE.Mesh(new THREE.PlaneGeometry(.72,.72),new THREE.MeshBasicMaterial({map:projectileTexture,side:THREE.DoubleSide,transparent:true})); card.position.copy(camera.position); const direction=new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion).normalize(); card.position.addScaledVector(direction,.65);scene.add(card);projectiles.push({mesh:card,velocity:direction.multiplyScalar(18),life:2.5}); };
     window.addEventListener("keydown",onKeyDown);window.addEventListener("keyup",onKeyUp);document.addEventListener("pointerlockchange",onPointerLock);document.addEventListener("mousemove",onMouseMove);renderer.domElement.addEventListener("mousedown",shoot);const observer=new ResizeObserver(resize);observer.observe(mount);
-    let frame=0; const animate=()=>{ frame=requestAnimationFrame(animate);const delta=Math.min(clock.getDelta(),.05);
-      const lookQuaternion=new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch,yaw,0,"YXZ"));
+    let frame=0; const animate=()=>{ frame=requestAnimationFrame(animate);const delta=Math.min(clock.getDelta(),.05);camera.rotation.set(pitch,yaw,0,"YXZ");
       const input=new THREE.Vector3(Number(keys.has("KeyD"))-Number(keys.has("KeyA")),0,Number(keys.has("KeyS"))-Number(keys.has("KeyW")));
-      if(input.lengthSq()){input.normalize().applyAxisAngle(new THREE.Vector3(0,1,0),yaw).multiplyScalar(MOVE_SPEED*delta);(["x","z"] as const).forEach((axis)=>{const next=playerPosition.clone();next[axis]+=input[axis];const player=new THREE.Box3(new THREE.Vector3(next.x-PLAYER_RADIUS,.1,next.z-PLAYER_RADIUS),new THREE.Vector3(next.x+PLAYER_RADIUS,PLAYER_HEIGHT+.2,next.z+PLAYER_RADIUS));if(!colliders.some(box=>box.intersectsBox(player)))playerPosition[axis]=next[axis];});}
-      if(currentView==="first"){ camera.position.set(playerPosition.x,playerPosition.y+PLAYER_HEIGHT,playerPosition.z); camera.quaternion.copy(lookQuaternion); }
-      else { const behind=new THREE.Vector3(0,0,1).applyQuaternion(lookQuaternion); camera.position.set(playerPosition.x+behind.x*THIRD_PERSON_DISTANCE,playerPosition.y+THIRD_PERSON_HEIGHT+Math.max(behind.y,0)*THIRD_PERSON_DISTANCE,playerPosition.z+behind.z*THIRD_PERSON_DISTANCE); camera.lookAt(playerPosition.x,playerPosition.y+PLAYER_HEIGHT*.7,playerPosition.z); }
-      if(avatarSprite){ avatarSprite.position.set(playerPosition.x,playerPosition.y+1.15,playerPosition.z); avatarSprite.visible=currentView==="third"; }
+      if(activeRef.current&&input.lengthSq()){input.normalize().applyAxisAngle(new THREE.Vector3(0,1,0),yaw).multiplyScalar(MOVE_SPEED*delta);(["x","z"] as const).forEach((axis)=>{const next=camera.position.clone();next[axis]+=input[axis];const player=new THREE.Box3(new THREE.Vector3(next.x-PLAYER_RADIUS,.1,next.z-PLAYER_RADIUS),new THREE.Vector3(next.x+PLAYER_RADIUS,PLAYER_HEIGHT+.2,next.z+PLAYER_RADIUS));if(!colliders.some(box=>box.intersectsBox(player)))camera.position[axis]=next[axis];});}
       targets.forEach((target,index)=>{target.rotation.y+=delta*(.7+index*.08);target.position.y=1.2+Math.sin(clock.elapsedTime*1.7+index)*.16;});
-      for(let i=projectiles.length-1;i>=0;i-=1){const projectile=projectiles[i];projectile.life-=delta;projectile.mesh.position.addScaledVector(projectile.velocity,delta);projectile.mesh.rotation.z+=delta*8;projectile.mesh.lookAt(camera.position);const hit=targets.find(target=>target.visible&&target.position.distanceTo(projectile.mesh.position)<1.05);if(hit){hit.visible=false;window.setTimeout(()=>{hit.visible=true;},2200);setScore(current=>current+100);setHitFlash(true);window.setTimeout(()=>setHitFlash(false),120);projectile.life=0;}if(projectile.life<=0){scene.remove(projectile.mesh);projectile.mesh.geometry.dispose();(projectile.mesh.material as THREE.Material).dispose();projectiles.splice(i,1);}}
+      for(let i=projectiles.length-1;i>=0;i-=1){const projectile=projectiles[i];projectile.life-=delta;projectile.mesh.position.addScaledVector(projectile.velocity,delta);projectile.mesh.rotation.z+=delta*8;projectile.mesh.lookAt(camera.position);const hit=targets.find(target=>target.visible&&target.position.distanceTo(projectile.mesh.position)<1.05);if(hit){hit.visible=false;window.setTimeout(()=>{hit.visible=true;},2200);setHitFlash(true);window.setTimeout(()=>setHitFlash(false),120);hitHandlerRef.current();projectile.life=0;}if(projectile.life<=0){scene.remove(projectile.mesh);projectile.mesh.geometry.dispose();(projectile.mesh.material as THREE.Material).dispose();projectiles.splice(i,1);}}
       renderer.render(scene,camera);};animate();
-    return()=>{cancelAnimationFrame(frame);observer.disconnect();window.removeEventListener("keydown",onKeyDown);window.removeEventListener("keyup",onKeyUp);document.removeEventListener("pointerlockchange",onPointerLock);document.removeEventListener("mousemove",onMouseMove);renderer.domElement.removeEventListener("mousedown",shoot);if(document.pointerLockElement===renderer.domElement)document.exitPointerLock();projectileTexture.dispose();if(avatarSprite){(avatarSprite.material as THREE.SpriteMaterial).map?.dispose();avatarSprite.material.dispose();}toggleViewRef.current=()=>{};renderer.dispose();renderer.domElement.remove();};
-  },[projectileImageUrl,characterImageUrl]);
+    return()=>{cancelAnimationFrame(frame);observer.disconnect();window.removeEventListener("keydown",onKeyDown);window.removeEventListener("keyup",onKeyUp);document.removeEventListener("pointerlockchange",onPointerLock);document.removeEventListener("mousemove",onMouseMove);renderer.domElement.removeEventListener("mousedown",shoot);if(document.pointerLockElement===renderer.domElement)document.exitPointerLock();projectileTexture.dispose();renderer.dispose();renderer.domElement.remove();};
+  },[item?.imageUrl]);
 
   return <div className={hitFlash?"arena-game is-hit":"arena-game"} ref={mountRef}>
-    <div className="arena-score"><small>SCORE</small><strong>{score.toString().padStart(4,"0")}</strong></div><div className="arena-team-score"><b>12</b><span>VS</span><b>8</b></div>
-    <div className="arena-feed"><span>You remembered the red target</span><span>A memory flew across the map</span></div><div className="arena-crosshair" aria-hidden="true"><i/><i/></div>
-    {viewMode==="first"?<div className="arena-hand" aria-hidden="true"><div className="arena-held-image" style={projectileImageUrl?{backgroundImage:`url(${projectileImageUrl})`}:undefined}>♥</div></div>:null}
-    <div className="arena-ammo"><small>MEMORIES</small><strong>{throws}<span>/12</span></strong></div>
-    <div className="arena-controls"><span>W A S D</span> move <span>CLICK</span> throw <span>V</span> view <span>ESC</span> cursor</div>
-    {characterImageUrl?<button className="arena-view-toggle" onClick={()=>toggleViewRef.current()} type="button">{viewMode==="first"?"3rd person":"1st person"}</button>:null}
-    {!locked?<button className="arena-start" onClick={()=>mountRef.current?.querySelector("canvas")?.requestPointerLock()} type="button"><strong>ENTER THE MEMORY ARENA</strong><span>Click to capture your cursor</span></button>:null}
+    {characterImageUrl ? <div className="arena-player-avatar" aria-hidden="true" style={{ backgroundImage: `url(${characterImageUrl})` }} /> : null}
+    <div className="arena-feed"><span>One hit ends the round</span><span>{item ? `Equipped: ${item.name}` : "Memory equipped"}</span></div><div className="arena-crosshair" aria-hidden="true"><i/><i/></div>
+    <div className="arena-hand" aria-hidden="true"><div className="arena-held-image" style={item?.imageUrl?{backgroundImage:`url(${item.imageUrl})`}:undefined}>♥</div></div>
+    <div className="arena-ammo"><small>MEMORIES</small><strong>{throws}<span>/12</span></strong></div><div className="arena-controls"><span>W A S D</span> move <span>CLICK</span> throw <span>ESC</span> cursor</div>
+    {!locked&&active?<button className="arena-start" onClick={()=>{const request=mountRef.current?.querySelector("canvas")?.requestPointerLock();void request?.catch(()=>undefined);}} type="button"><strong>ENTER THE ROUND</strong><span>Click to capture your cursor</span></button>:null}
   </div>;
 }
