@@ -13,5 +13,8 @@ export function createGameConfig(
     parent,
     backgroundColor: "#111111",
     scene: [BootScene, InventoryScene, ArenaScene],
+    dom: {
+      createContainer: true,
+    },
   };
 }

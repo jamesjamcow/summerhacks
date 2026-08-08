@@ -7,7 +7,12 @@ import {
   Item,
   ParticipantSlot,
 } from "./types";
-import { DEFAULT_MAX_HEALTH, clampHealth, otherSlot } from "./rules";
+import {
+  DEFAULT_MAX_HEALTH,
+  clampHealth,
+  computeCooldownTurns,
+  otherSlot,
+} from "./rules";
 
 function buildParticipant(
   slot: ParticipantSlot,
@@ -148,9 +153,7 @@ export function applyAction(
     ...actor,
     cooldowns: {
       ...decrementedCooldowns,
-      ...(item.ability.cooldownTurns
-        ? { [itemId]: item.ability.cooldownTurns }
-        : {}),
+      [itemId]: computeCooldownTurns(item.ability.damage),
     },
   };
 

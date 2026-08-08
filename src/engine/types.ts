@@ -7,7 +7,6 @@ export interface Ability {
   name: string;
   damage: number;
   useCase: string;
-  cooldownTurns?: number;
 }
 
 export interface Item {

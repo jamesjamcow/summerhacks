@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { applyAction, createBattle } from "../battleEngine";
+import { computeCooldownTurns } from "../rules";
 import { Character } from "../types";
 
 function makeCharacter(
   id: string,
   displayName: string,
   damage: number,
-  cooldownTurns?: number,
 ): Character {
   return {
     id,
@@ -24,13 +24,20 @@ function makeCharacter(
             name: "Test Ability",
             damage,
             useCase: "test strike",
-            cooldownTurns,
           },
         },
       ],
     },
   };
 }
+
+describe("computeCooldownTurns", () => {
+  it("scales cooldown up with damage and floors at 1 turn", () => {
+    expect(computeCooldownTurns(8)).toBe(1);
+    expect(computeCooldownTurns(20)).toBe(2);
+    expect(computeCooldownTurns(35)).toBe(4);
+  });
+});
 
 describe("battleEngine", () => {
   it("creates a battle with full health for both sides and player active", () => {
@@ -86,8 +93,8 @@ describe("battleEngine", () => {
     expect(events[0].type).toBe("INVALID_ACTION");
   });
 
-  it("enforces item cooldown", () => {
-    const player = makeCharacter("player-1", "Player", 20, 2);
+  it("enforces item cooldown scaled from damage dealt", () => {
+    const player = makeCharacter("player-1", "Player", 20);
     const opponent = makeCharacter("cpu-1", "CPU", 15);
     const context = { playerCharacter: player, opponentCharacter: opponent };
     let state = createBattle("battle-1", player, opponent, {
