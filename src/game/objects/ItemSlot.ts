@@ -1,0 +1,60 @@
+import * as Phaser from "phaser";
+import { Item } from "@/engine/types";
+import { fallbackColorForKey } from "../assetKeys";
+
+export class ItemSlot extends Phaser.GameObjects.Container {
+  readonly item: Item;
+  private box: Phaser.GameObjects.Rectangle;
+  private selected = false;
+
+  constructor(
+    scene: Phaser.Scene,
+    x: number,
+    y: number,
+    item: Item,
+    onToggle: (item: Item, selected: boolean) => void,
+  ) {
+    super(scene, x, y);
+    this.item = item;
+
+    this.box = scene.add
+      .rectangle(0, 0, 100, 100, fallbackColorForKey(item.spriteKey))
+      .setStrokeStyle(3, 0xffffff, 0)
+      .setInteractive({ useHandCursor: true });
+
+    const nameLabel = scene.add
+      .text(0, 40, item.name, { fontSize: "12px", color: "#ffffff", align: "center" })
+      .setOrigin(0.5, 0)
+      .setWordWrapWidth(100);
+
+    const damageLabel = scene.add
+      .text(0, -10, `${item.ability.damage} dmg`, {
+        fontSize: "16px",
+        color: "#ffffff",
+      })
+      .setOrigin(0.5, 0.5);
+
+    this.add([this.box, nameLabel, damageLabel]);
+    scene.add.existing(this);
+
+    this.box.on("pointerdown", () => {
+      this.selected = !this.selected;
+      this.box.setStrokeStyle(3, 0xffe066, this.selected ? 1 : 0);
+      onToggle(item, this.selected);
+    });
+  }
+
+  setEnabled(enabled: boolean) {
+    this.box.setAlpha(enabled ? 1 : 0.4);
+    if (enabled) {
+      this.box.setInteractive({ useHandCursor: true });
+    } else {
+      this.box.disableInteractive();
+    }
+  }
+
+  setSelected(selected: boolean) {
+    this.selected = selected;
+    this.box.setStrokeStyle(3, 0xffe066, selected ? 1 : 0);
+  }
+}

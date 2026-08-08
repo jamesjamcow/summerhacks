@@ -1,0 +1,7 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 13, "column": 0}, "map": {"version":3,"sources":["file:///Users/fransys/Documents/summerhacks/src/app/favicon.ico.mjs%20(structured%20image%20object)"],"sourcesContent":["import src from \"IMAGE\";\nexport default { src, width: 256, height: 256 }\n"],"names":["src","width","height"],"mappings":";;;;AAAA;;uCACe;IAAEA,KAAAA,0IAAG;IAAEC,OAAO;IAAKC,QAAQ;AAAI"}},
+    {"offset": {"line": 28, "column": 0}, "map": {"version":3,"sources":["file:///Users/fransys/Documents/summerhacks/src/app/page.tsx"],"sourcesContent":["import Link from \"next/link\";\n\nexport default function Home() {\n  return (\n    <main style={{ padding: 40, fontFamily: \"sans-serif\" }}>\n      <h1>Memory Arena</h1>\n      <p>Game state logic + scene stub. Real landing page lives elsewhere.</p>\n      <Link href=\"/play\">Enter the game →</Link>\n    </main>\n  );\n}\n"],"names":["Home","style","padding","fontFamily","href"],"mappings":";;;;;AAAA;;;AAEe,SAASA;IACtB,qBACE,8OAAC;QAAKC,OAAO;YAAEC,SAAS;YAAIC,YAAY;QAAa;;0BACnD,8OAAC;0BAAG;;;;;;0BACJ,8OAAC;0BAAE;;;;;;0BACH,8OAAC,0LAAI;gBAACC,MAAK;0BAAQ;;;;;;;;;;;;AAGzB"}}]
+}

@@ -1,0 +1,10 @@
+{
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/api/battle/action/route": "/api/battle/action",
+  "/api/battle/start/route": "/api/battle/start",
+  "/api/items/route": "/api/items",
+  "/favicon.ico/route": "/favicon.ico",
+  "/page": "/",
+  "/play/page": "/play"
+}
