@@ -17,6 +17,11 @@ const BookScene = dynamic(() => import("./book-scene"), {
   ),
 });
 
+const ArenaGame = dynamic(() => import("@/components/arena/arena-game"), {
+  ssr: false,
+  loading: () => <div className="arena-game-loading">Loading arena…</div>,
+});
+
 type LobbyMode = "create" | "join";
 type ExperienceStep = "cover" | "opening" | "lobby" | "scrapbook";
 
@@ -387,22 +392,19 @@ function UploadMemoryOverlay({
   );
 }
 
-function ArenaOverlay({ onClose }: { onClose: () => void }) {
+function ArenaOverlay({ items, onClose }: { items: MemoryItem[]; onClose: () => void }) {
   return (
     <div className="scrapbook-overlay" role="presentation" onMouseDown={onClose}>
       <section
         aria-labelledby="arena-title"
         aria-modal="true"
-        className="scrapbook-modal arena-modal"
+        className="scrapbook-modal arena-modal arena-game-modal"
         role="dialog"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <button className="scrapbook-modal-close" onClick={onClose} aria-label="Close arena preview" type="button">×</button>
-        <div className="arena-emblem" aria-hidden="true">⚔</div>
-        <p className="arena-kicker">The next chapter</p>
-        <h2 id="arena-title">The Arena is taking shape.</h2>
-        <p>Your scrapbook characters and their collected memory artifacts will meet here in a future multiplayer battle experience.</p>
-        <button onClick={onClose} type="button">Back to the scrapbook</button>
+        <h2 className="sr-only" id="arena-title">Memory Arena</h2>
+        <button className="scrapbook-modal-close arena-game-close" onClick={onClose} aria-label="Close arena" type="button">×</button>
+        <ArenaGame projectileImageUrl={items[0]?.artifactImageUrl} />
       </section>
     </div>
   );
@@ -522,7 +524,7 @@ function Scrapbook({
           )
         : null}
       {overlay === "arena"
-        ? createPortal(<ArenaOverlay onClose={() => setOverlay(undefined)} />, document.body)
+        ? createPortal(<ArenaOverlay items={artifacts} onClose={() => setOverlay(undefined)} />, document.body)
         : null}
     </section>
   );
