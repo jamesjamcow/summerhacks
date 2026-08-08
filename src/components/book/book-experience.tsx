@@ -216,15 +216,6 @@ function ClosedBookCover({ opening, onStart }: { opening: boolean; onStart: () =
       >
         <div className="closed-book-pages" aria-hidden="true">
           <span className="closed-book-page-lines" />
-          <article className="closed-book-open-page">
-            <p>Begin together</p>
-            <h2>Your next page starts here.</h2>
-            <span>Open a scrapbook of your own, or arrive with a code.</span>
-            <div className="closed-book-open-actions">
-              <i>+&nbsp;&nbsp; Create a new page</i>
-              <i>→&nbsp;&nbsp; Join a page</i>
-            </div>
-          </article>
         </div>
         <div className="closed-book-back" aria-hidden="true" />
         <div className="closed-book-front">
@@ -241,12 +232,6 @@ function ClosedBookCover({ opening, onStart }: { opening: boolean; onStart: () =
             </button>
             <div className="cover-rule cover-rule-bottom" aria-hidden="true" />
           </div>
-          <article className="closed-book-front-inside" aria-hidden="true">
-            <p>Summer / Twenty-six</p>
-            <h2>For the things you keep meaning to make.</h2>
-            <span>A shared page is a tiny lobby for an idea. Open one, invite your people, and see where the night takes you.</span>
-            <i>No pitch deck required.</i>
-          </article>
           <span className="closed-book-cover-edge" aria-hidden="true" />
         </div>
         <div className="closed-book-spine" aria-hidden="true" />
@@ -256,9 +241,22 @@ function ClosedBookCover({ opening, onStart }: { opening: boolean; onStart: () =
   );
 }
 
-function MemberCharacter({ viewer, onOpenInventory }: { viewer: Viewer; onOpenInventory: () => void }) {
+function MemberCharacter({
+  selected,
+  viewer,
+  onSelect,
+}: {
+  selected: boolean;
+  viewer: Viewer;
+  onSelect: () => void;
+}) {
   return (
-    <article className="scrapbook-member">
+    <button
+      aria-pressed={selected}
+      className={selected ? "scrapbook-member is-selected" : "scrapbook-member"}
+      onClick={onSelect}
+      type="button"
+    >
       <p className="member-name">{viewer.name}</p>
       <div className="member-scene">
         <div className="stick-person" aria-label={`${viewer.name} character placeholder`} role="img">
@@ -268,19 +266,14 @@ function MemberCharacter({ viewer, onOpenInventory }: { viewer: Viewer; onOpenIn
           <span className="stick-leg stick-leg-left" />
           <span className="stick-leg stick-leg-right" />
         </div>
-        <button
-          className="member-chest"
-          onClick={onOpenInventory}
-          aria-label={`Open ${viewer.name}'s inventory`}
-          title={`Open ${viewer.name}'s inventory`}
-          type="button"
-        >
+        <span className="member-chest" aria-hidden="true">
           <span className="chest-lid" />
           <span className="chest-lock" />
-        </button>
+        </span>
       </div>
       <span className="member-note">You · memory keeper</span>
-    </article>
+      <span className="member-card-action">{selected ? "Viewing profile" : "Open profile"}</span>
+    </button>
   );
 }
 
@@ -301,55 +294,12 @@ function InventoryItemCard({ item }: { item: MemoryItem }) {
   );
 }
 
-function InventoryOverlay({
-  items,
-  member,
-  onClose,
-}: {
-  items: MemoryItem[];
-  member: Viewer;
-  onClose: () => void;
-}) {
-  return (
-    <div className="scrapbook-overlay" role="presentation" onMouseDown={onClose}>
-      <section
-        aria-labelledby="inventory-title"
-        aria-modal="true"
-        className="scrapbook-modal inventory-modal"
-        role="dialog"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <button className="scrapbook-modal-close" onClick={onClose} aria-label="Close inventory" type="button">×</button>
-        <div className="inventory-owner">
-          <div className="inventory-avatar" aria-hidden="true">{member.initials}</div>
-          <div>
-            <p>Memory chest</p>
-            <h2 id="inventory-title">{member.name}’s inventory</h2>
-          </div>
-        </div>
-
-        {items.length ? (
-          <div className="inventory-grid">
-            {items.map((item) => <InventoryItemCard item={item} key={item.id} />)}
-          </div>
-        ) : (
-          <div className="inventory-empty">
-            <div className="empty-chest" aria-hidden="true">
-              <span />
-            </div>
-            <h3>No memory items yet.</h3>
-            <p>Artifacts made from shared memories will collect here.</p>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
 function UploadMemoryOverlay({
+  recipient,
   onArtifactsGenerated,
   onClose,
 }: {
+  recipient: Viewer;
   onArtifactsGenerated: (artifacts: MemoryArtifact[]) => void;
   onClose: () => void;
 }) {
@@ -364,30 +314,107 @@ function UploadMemoryOverlay({
       >
         <button className="scrapbook-modal-close" onClick={onClose} aria-label="Close upload memory" type="button">×</button>
         <header className="overlay-heading">
-          <p>Add to the story</p>
+          <p>For {recipient.name}</p>
           <h2 id="upload-memory-title">Upload a memory</h2>
-          <span>Every file becomes one hand-drawn object for your memory chest.</span>
+          <span>Every file becomes one hand-drawn object for {recipient.name}’s collection.</span>
         </header>
 
         <div className="memory-flow-steps" aria-label="Memory upload steps">
           <span className="active"><strong>1</strong> Add memories</span>
-          <span><strong>2</strong> Find key objects</span>
-          <span><strong>3</strong> Draw keepsakes</span>
+          <span><strong>2</strong> Draw keepsakes</span>
+          <span><strong>3</strong> Attach to {recipient.name}</span>
         </div>
 
-        <div className="scrapbook-uploader modal-uploader">
+        <div className="scrapbook-uploader modal-uploader" data-recipient-id={recipient.id}>
           <UploadPanel onArtifactsGenerated={onArtifactsGenerated} />
         </div>
 
-        <section className="memory-recipient" aria-labelledby="keepsake-rule-title">
-          <span className="memory-step">The keepsake rule</span>
-          <h3 id="keepsake-rule-title">One memory, one object.</h3>
+        <section className="memory-recipient" aria-labelledby="recipient-title">
+          <span className="memory-step">Recipient selected</span>
+          <h3 id="recipient-title">{recipient.name}</h3>
           <p>
-            Five files make five keepsakes. Finished drawings appear here and
-            collect in your chest automatically.
+            One memory makes one object. Finished keepsakes appear in this
+            member’s inventory automatically.
           </p>
         </section>
       </section>
+    </div>
+  );
+}
+
+function SelectedMemberProfile({
+  currentUserId,
+  items,
+  member,
+  onArena,
+  onBack,
+  onUpload,
+}: {
+  currentUserId: string;
+  items: MemoryItem[];
+  member: Viewer;
+  onArena: () => void;
+  onBack: () => void;
+  onUpload: () => void;
+}) {
+  const isCurrentUser = member.id === currentUserId;
+
+  return (
+    <div className="right-page-content member-profile-content" key={member.id}>
+      <div className="member-profile-toolbar">
+        <button className="profile-back" onClick={onBack} type="button">← Scrapbook overview</button>
+        <button className="profile-arena" onClick={onArena} type="button">⚔ Arena</button>
+      </div>
+
+      <header className="selected-member-header">
+        <div className="selected-member-portrait" aria-hidden="true">
+          <span>{member.initials}</span>
+          <i className="portrait-body" />
+          <i className="portrait-arms" />
+        </div>
+        <div>
+          <p>{isCurrentUser ? "You · Memory keeper" : "Scrapbook member"}</p>
+          <h2>{member.name}</h2>
+          <span>Every keepsake added for {member.name} will collect on this page.</span>
+        </div>
+        <div className="profile-chest" aria-hidden="true">
+          <span />
+          <i />
+        </div>
+      </header>
+
+      <div className="profile-inventory-heading">
+        <div>
+          <p>Inventory</p>
+          <h3>Memory keepsakes</h3>
+        </div>
+        <span>{items.length}</span>
+      </div>
+
+      {items.length ? (
+        <div className="inventory-grid profile-inventory-grid">
+          {items.map((item) => <InventoryItemCard item={item} key={item.id} />)}
+        </div>
+      ) : (
+        <div className="profile-empty-inventory">
+          <div className="profile-empty-mark" aria-hidden="true">✦</div>
+          <div>
+            <h3>No keepsakes yet.</h3>
+            <p>Add a memory to start their collection.</p>
+          </div>
+        </div>
+      )}
+
+      <div className="profile-memory-action">
+        {isCurrentUser ? (
+          <>
+            <button disabled type="button">+ Upload Memory</button>
+            <p>Others add memories to you.</p>
+          </>
+        ) : (
+          <button onClick={onUpload} type="button">+ Upload Memory for {member.name}</button>
+        )}
+      </div>
     </div>
   );
 }
@@ -419,9 +446,11 @@ function Scrapbook({
   session: ScrapbookSession;
   viewer: Viewer;
 }) {
-  const [inventoryMember, setInventoryMember] = useState<Viewer>();
+  const members = [viewer];
+  const [selectedMemberId, setSelectedMemberId] = useState<string>();
   const [overlay, setOverlay] = useState<ScrapbookOverlay>();
   const [artifacts, setArtifacts] = useState(initialArtifacts);
+  const selectedMember = members.find((member) => member.id === selectedMemberId);
 
   const addArtifacts = (newArtifacts: MemoryArtifact[]) => {
     setArtifacts((current) => {
@@ -432,16 +461,16 @@ function Scrapbook({
   };
 
   useEffect(() => {
-    if (!inventoryMember && !overlay) return;
+    if (!selectedMemberId && !overlay) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setInventoryMember(undefined);
-        setOverlay(undefined);
+        if (overlay) setOverlay(undefined);
+        else setSelectedMemberId(undefined);
       }
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [inventoryMember, overlay]);
+  }, [selectedMemberId, overlay]);
 
   return (
     <section className="scrapbook-stage" aria-label={`${session.name} scrapbook`}>
@@ -463,60 +492,67 @@ function Scrapbook({
             <strong>1</strong>
           </div>
           <div className="scrapbook-members">
-            <MemberCharacter viewer={viewer} onOpenInventory={() => setInventoryMember(viewer)} />
+            {members.map((member) => (
+              <MemberCharacter
+                key={member.id}
+                selected={selectedMemberId === member.id}
+                viewer={member}
+                onSelect={() => setSelectedMemberId(member.id)}
+              />
+            ))}
           </div>
         </div>
 
         <div className="scrapbook-page scrapbook-page-right">
-          <div className="scrapbook-actions">
-            <button className="memory-action" onClick={() => setOverlay("upload")} type="button">
-              <span aria-hidden="true">+</span> Upload Memory
-            </button>
-            <button className="arena-action" onClick={() => setOverlay("arena")} type="button">
-              <span aria-hidden="true">⚔</span> Enter Arena
-            </button>
-          </div>
+          {selectedMember ? (
+            <SelectedMemberProfile
+              currentUserId={viewer.id}
+              items={artifacts}
+              member={selectedMember}
+              onArena={() => setOverlay("arena")}
+              onBack={() => setSelectedMemberId(undefined)}
+              onUpload={() => setOverlay("upload")}
+            />
+          ) : (
+            <div className="right-page-content overview-page-content">
+              <div className="scrapbook-actions overview-actions">
+                <button className="arena-action" onClick={() => setOverlay("arena")} type="button">
+                  <span aria-hidden="true">⚔</span> Enter Arena
+                </button>
+              </div>
 
-          <header className="memory-heading scrapbook-world-heading">
-            <p>A shared world</p>
-            <h2>Made by remembering.</h2>
-            <span>Every person carries a chest. Every memory you add gives this little world more history.</span>
-          </header>
+              <header className="memory-heading scrapbook-world-heading">
+                <p>A shared world</p>
+                <h2>Made by remembering.</h2>
+                <span>Every person carries a chest. Select someone from the left page to see the keepsakes growing with them.</span>
+              </header>
 
-          <div className="scrapbook-stats" aria-label="Scrapbook details">
-            <div>
-              <strong>1</strong>
-              <span>Member</span>
+              <div className="scrapbook-stats" aria-label="Scrapbook details">
+                <div>
+                  <strong>{members.length}</strong>
+                  <span>{members.length === 1 ? "Member" : "Members"}</span>
+                </div>
+                <div>
+                  <strong>{artifacts.length}</strong>
+                  <span>Memory items</span>
+                </div>
+              </div>
+
+              <section className="memory-wall" aria-labelledby="memory-wall-title">
+                <span className="memory-wall-tape" aria-hidden="true" />
+                <p>Open someone’s page</p>
+                <h3 id="memory-wall-title">Every person keeps a different part of the story.</h3>
+                <span>Select a member card to view their character, chest, and growing memory inventory.</span>
+              </section>
             </div>
-            <div>
-              <strong>{artifacts.length}</strong>
-              <span>Memory items</span>
-            </div>
-          </div>
-
-          <section className="memory-wall" aria-labelledby="memory-wall-title">
-            <span className="memory-wall-tape" aria-hidden="true" />
-            <p>Start the collection</p>
-            <h3 id="memory-wall-title">The first keepsake starts with you.</h3>
-            <span>Add a memory to someone in this book. Their future artifacts will gather inside their chest.</span>
-            <button onClick={() => setOverlay("upload")} type="button">Add the first memory →</button>
-          </section>
+          )}
         </div>
       </div>
 
-      {inventoryMember
-        ? createPortal(
-            <InventoryOverlay
-              items={artifacts}
-              member={inventoryMember}
-              onClose={() => setInventoryMember(undefined)}
-            />,
-            document.body,
-          )
-        : null}
-      {overlay === "upload"
+      {overlay === "upload" && selectedMember
         ? createPortal(
             <UploadMemoryOverlay
+              recipient={selectedMember}
               onArtifactsGenerated={addArtifacts}
               onClose={() => setOverlay(undefined)}
             />,
@@ -546,7 +582,7 @@ export function BookExperience({
 
   const openBook = () => {
     setStep("opening");
-    const animationLength = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 80 : 1180;
+    const animationLength = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 80 : 620;
     openingTimer.current = window.setTimeout(() => setStep("lobby"), animationLength);
   };
 
