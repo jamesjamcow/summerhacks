@@ -7,8 +7,9 @@ variables.
 ## What this project is
 
 Summerhacks is a Next.js 16 App Router application written in TypeScript and
-styled with Tailwind CSS 4. It has one public landing page and one private
-dashboard. The dashboard is deliberately small but exercises the full stack:
+styled with Tailwind CSS 4. Its root route is an authenticated scrapbook-book
+experience and it also has a private diagnostic dashboard. The dashboard is
+deliberately small but exercises the full stack:
 
 1. Clerk authenticates the visitor and provides a stable `userId`.
 2. A Server Action writes the user's notes to Neon Postgres.
@@ -39,7 +40,7 @@ duplicate version numbers elsewhere unless a compatibility note requires it.
 
 | Route | Access | Purpose |
 | --- | --- | --- |
-| `/` | Public | Landing page and Clerk sign-in/sign-up buttons |
+| `/` | Signed-in users | Closed cover, create/join setup, and the scrapbook experience |
 | `/sign-in/[[...sign-in]]` | Public | Clerk's hosted sign-in component |
 | `/sign-up/[[...sign-up]]` | Public | Clerk's hosted sign-up component |
 | `/dashboard` | Signed-in users | Notes, uploader, and each user's recent records |
@@ -61,8 +62,9 @@ src/
     sign-in/[[...sign-in]]/       Clerk sign-in page
     sign-up/[[...sign-up]]/       Clerk sign-up page
     layout.tsx                    Clerk provider and global application shell
-    page.tsx                      Public landing page
+    page.tsx                      Protected scrapbook entry and Clerk viewer data
   components/upload-panel.tsx    Small client boundary for upload state
+  components/book/               Closed cover, setup spread, and scrapbook UI
   db/index.ts                     Server-only lazy Neon/Drizzle connection
   db/schema.ts                    Drizzle table definitions
   lib/uploadthing.ts              Typed UploadDropzone factory
@@ -178,6 +180,22 @@ Current limitation: UploadThing storage can succeed while the Neon metadata
 insert fails, leaving an unlisted file in UploadThing. Production code may add
 an idempotent retry, webhook reconciliation, or cleanup job. A file deletion
 feature must delete both the UploadThing object and its owner-scoped Neon row.
+
+## Scrapbook experience
+
+The root route authenticates with Clerk and passes only a serializable viewer
+ID, display name, and initials to the interactive book. The create/join code
+generation and page session currently live in client state, as they did in the
+original prototype. There are no scrapbook, invite, or membership tables or
+server mutations yet. Consequently, the only member the scrapbook can render
+from real data is the signed-in Clerk user; do not invent other members or treat
+an entered code as durable authorization.
+
+UploadThing still authenticates every upload on the server. In the scrapbook UI
+the uploader is reachable only after the signed-in visitor creates or joins the
+current client-side page session. Durable scrapbook membership and recipient
+ownership checks require a future data model and server-side authorization
+design before uploads can be attached to another member.
 
 ## Server and client boundaries
 

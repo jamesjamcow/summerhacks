@@ -1,17 +1,10 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import {
-  FormEvent,
-  type PointerEvent as ReactPointerEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
-import { BOOK_SPREADS, TOTAL_SPREADS } from "./book-content";
+import { UploadPanel } from "@/components/upload-panel";
 
 const BookScene = dynamic(() => import("./book-scene"), {
   ssr: false,
@@ -24,10 +17,29 @@ const BookScene = dynamic(() => import("./book-scene"), {
 });
 
 type LobbyMode = "create" | "join";
-type DragDirection = "next" | "previous";
-type DragPreview = { direction: DragDirection; progress: number };
+type ExperienceStep = "cover" | "opening" | "lobby" | "scrapbook";
 
-const DRAG_AXIS_SLOP = 8;
+type Viewer = {
+  id: string;
+  name: string;
+  initials: string;
+};
+
+type ScrapbookSession = {
+  code: string;
+  name: string;
+};
+
+type MemoryItem = {
+  id: string;
+  name: string;
+  ability?: string;
+  artifactImageUrl?: string;
+  originalMemory?: string;
+  addedBy?: string;
+};
+
+type ScrapbookOverlay = "upload" | "arena";
 
 function FinalPageActions({
   onCreate,
@@ -42,9 +54,9 @@ function FinalPageActions({
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <p>The last page</p>
+      <p>Begin together</p>
       <h2>Your next page starts here.</h2>
-      <span>Open a room of your own, or arrive with a code.</span>
+      <span>Open a scrapbook of your own, or arrive with a code.</span>
       <div className="model-page-buttons">
         <button onClick={onCreate} type="button">
           <span className="button-mark" aria-hidden="true">+</span>
@@ -73,7 +85,7 @@ function LobbyDialog({
 }: {
   mode: LobbyMode;
   onClose: () => void;
-  onComplete: (message: string) => void;
+  onComplete: (session: ScrapbookSession) => void;
 }) {
   const [name, setName] = useState("");
   const [joinCode, setJoinCode] = useState("");
@@ -90,7 +102,7 @@ function LobbyDialog({
 
     const normalizedCode = joinCode.trim().toUpperCase();
     if (normalizedCode.length < 4) return;
-    onComplete(`Page ${normalizedCode} is ready to join.`);
+    onComplete({ code: normalizedCode, name: `Scrapbook ${normalizedCode}` });
   };
 
   const copyCode = async () => {
@@ -118,7 +130,7 @@ function LobbyDialog({
           </svg>
         </button>
 
-        <p className="dialog-kicker">{mode === "create" ? "New page" : "Have an invite?"}</p>
+        <p className="dialog-kicker">{mode === "create" ? "New scrapbook" : "Have an invite?"}</p>
         <h2 id="lobby-dialog-title">
           {createdCode
             ? "Your page is ready."
@@ -128,9 +140,9 @@ function LobbyDialog({
         </h2>
         <p className="dialog-copy">
           {createdCode
-            ? "Share this code with the people you want in the room."
+            ? "Share this code with the people you want in the scrapbook."
             : mode === "create"
-              ? "Give the room a name. You can shape everything else together later."
+              ? "Give this scrapbook a name. You can fill it together from there."
               : "Enter the page code from your invitation."}
         </p>
 
@@ -143,16 +155,16 @@ function LobbyDialog({
             </button>
             <button
               className="dialog-primary"
-              onClick={() => onComplete(`Page ${createdCode} was created.`)}
+              onClick={() => onComplete({ code: createdCode, name: name || "Untitled page" })}
               type="button"
             >
-              Open the page
+              Open the scrapbook
             </button>
           </div>
         ) : (
           <form className="dialog-form" onSubmit={submit}>
             <label htmlFor="lobby-field">
-              {mode === "create" ? "Page name" : "Page code"}
+              {mode === "create" ? "Scrapbook name" : "Page code"}
             </label>
             <input
               autoFocus
@@ -164,7 +176,7 @@ function LobbyDialog({
                   ? setName(event.target.value)
                   : setJoinCode(event.target.value.replace(/[^a-zA-Z0-9]/g, ""))
               }
-              placeholder={mode === "create" ? "Late-night launch" : "e.g. SUN8UP"}
+              placeholder={mode === "create" ? "Summer we turned twenty" : "e.g. SUN8UP"}
               required
               value={mode === "create" ? name : joinCode}
             />
@@ -173,159 +185,290 @@ function LobbyDialog({
             </button>
           </form>
         )}
-
-        <p className="dialog-note">
-          Lobby presence is a preview for now. Persistence and live members can plug into the existing backend next.
-        </p>
       </section>
     </div>
   );
 }
 
-export function BookExperience() {
-  const [spread, setSpread] = useState(0);
-  const [dialog, setDialog] = useState<LobbyMode>();
-  const [toast, setToast] = useState<string>();
-  const [dragPreview, setDragPreview] = useState<DragPreview>();
-  const dragStart = useRef<
-    | {
-        pointerId: number;
-        x: number;
-        y: number;
-        time: number;
-      }
-    | undefined
-  >(undefined);
-
-  const previous = useCallback(() => {
-    setSpread((value) => Math.max(0, value - 1));
-  }, []);
-
-  const next = useCallback(() => {
-    setSpread((value) => Math.min(TOTAL_SPREADS - 1, value + 1));
-  }, []);
-
-  const startPageDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.pointerType === "mouse" && event.button !== 0) return;
-
-    const target = event.target as HTMLElement;
-    if (target.closest("button, a, input, textarea, select")) return;
-
-    setDragPreview(undefined);
-    dragStart.current = {
-      pointerId: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      time: performance.now(),
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  };
-
-  const updatePageDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const start = dragStart.current;
-    if (!start || start.pointerId !== event.pointerId) return;
-
-    const deltaX = event.clientX - start.x;
-    const deltaY = event.clientY - start.y;
-    if (Math.abs(deltaX) < DRAG_AXIS_SLOP || Math.abs(deltaX) <= Math.abs(deltaY)) {
-      setDragPreview(undefined);
-      return;
-    }
-
-    const direction: DragDirection = deltaX < 0 ? "next" : "previous";
-    const canTurn = direction === "next" ? spread < TOTAL_SPREADS - 1 : spread > 0;
-    if (!canTurn) {
-      setDragPreview(undefined);
-      return;
-    }
-
-    const previewDistance = Math.max(180, event.currentTarget.clientWidth * 0.38);
-    setDragPreview({
-      direction,
-      progress: Math.min(1, Math.abs(deltaX) / previewDistance),
-    });
-  };
-
-  const finishPageDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const start = dragStart.current;
-    if (!start || start.pointerId !== event.pointerId) return;
-
-    const deltaX = event.clientX - start.x;
-    const deltaY = event.clientY - start.y;
-    const elapsed = Math.max(1, performance.now() - start.time);
-    const velocity = Math.abs(deltaX) / elapsed;
-    const commitDistance = Math.min(96, event.currentTarget.clientWidth * 0.13);
-    const isHorizontal = Math.abs(deltaX) > Math.abs(deltaY) * 1.15;
-    const shouldTurn =
-      isHorizontal &&
-      (Math.abs(deltaX) >= commitDistance ||
-        (Math.abs(deltaX) >= 24 && velocity >= 0.55));
-
-    if (shouldTurn) {
-      if (deltaX < 0) next();
-      else previous();
-    }
-
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    dragStart.current = undefined;
-    setDragPreview(undefined);
-  };
-
-  const cancelPageDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (dragStart.current?.pointerId !== event.pointerId) return;
-    dragStart.current = undefined;
-    setDragPreview(undefined);
-  };
-
-  useEffect(() => {
-    const handleKeyboard = (event: KeyboardEvent) => {
-      if (dialog) {
-        if (event.key === "Escape") setDialog(undefined);
-        return;
-      }
-
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        target.matches("input, textarea, select, button, a")
-      ) {
-        return;
-      }
-
-      if (["ArrowRight", "PageDown", " "].includes(event.key)) {
-        event.preventDefault();
-        next();
-      } else if (["ArrowLeft", "PageUp"].includes(event.key)) {
-        event.preventDefault();
-        previous();
-      } else if (event.key === "Home") {
-        setSpread(0);
-      } else if (event.key === "End") {
-        setSpread(TOTAL_SPREADS - 1);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyboard);
-    return () => window.removeEventListener("keydown", handleKeyboard);
-  }, [dialog, next, previous]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(undefined), 3600);
-    return () => window.clearTimeout(timeout);
-  }, [toast]);
-
-  const activeSpread = BOOK_SPREADS[spread];
-  const progressLabel = useMemo(
-    () => `Spread ${spread + 1} of ${TOTAL_SPREADS}: ${activeSpread.title}`,
-    [activeSpread.title, spread],
+function ClosedBookCover({ opening, onStart }: { opening: boolean; onStart: () => void }) {
+  return (
+    <section className={opening ? "cover-stage is-opening" : "cover-stage"} aria-label="Closed scrapbook cover">
+      <div className={opening ? "closed-book is-opening" : "closed-book"}>
+        <div className="closed-book-pages" aria-hidden="true" />
+        <div className="closed-book-back" aria-hidden="true" />
+        <div className="closed-book-front">
+          <span className="cover-corner cover-corner-one" aria-hidden="true" />
+          <span className="cover-corner cover-corner-two" aria-hidden="true" />
+          <div className="cover-rule" aria-hidden="true" />
+          <p className="cover-kicker">A book of us</p>
+          <h1>Scrapbook</h1>
+          <p className="cover-line">Built by the people who remember you.</p>
+          <button disabled={opening} onClick={onStart} type="button">
+            Get Started
+            <span aria-hidden="true">→</span>
+          </button>
+          <div className="cover-rule cover-rule-bottom" aria-hidden="true" />
+        </div>
+        <div className="closed-book-spine" aria-hidden="true" />
+      </div>
+      <p className="cover-hint">Open when you’re ready</p>
+    </section>
   );
+}
 
-  const finishDialog = (message: string) => {
+function MemberCharacter({ viewer, onOpenInventory }: { viewer: Viewer; onOpenInventory: () => void }) {
+  return (
+    <article className="scrapbook-member">
+      <p className="member-name">{viewer.name}</p>
+      <div className="member-scene">
+        <div className="stick-person" aria-label={`${viewer.name} character placeholder`} role="img">
+          <span className="stick-head">{viewer.initials}</span>
+          <span className="stick-body" />
+          <span className="stick-arms" />
+          <span className="stick-leg stick-leg-left" />
+          <span className="stick-leg stick-leg-right" />
+        </div>
+        <button
+          className="member-chest"
+          onClick={onOpenInventory}
+          aria-label={`Open ${viewer.name}'s inventory`}
+          title={`Open ${viewer.name}'s inventory`}
+          type="button"
+        >
+          <span className="chest-lid" />
+          <span className="chest-lock" />
+        </button>
+      </div>
+      <span className="member-note">You · memory keeper</span>
+    </article>
+  );
+}
+
+function InventoryItemCard({ item }: { item: MemoryItem }) {
+  return (
+    <article className="inventory-item">
+      <div
+        className="inventory-item-art"
+        style={item.artifactImageUrl ? { backgroundImage: `url(${item.artifactImageUrl})` } : undefined}
+      />
+      <div>
+        <h4>{item.name}</h4>
+        {item.ability ? <p>{item.ability}</p> : null}
+        {item.originalMemory ? <small>{item.originalMemory}</small> : null}
+        {item.addedBy ? <span>Added by {item.addedBy}</span> : null}
+      </div>
+    </article>
+  );
+}
+
+function InventoryOverlay({ member, onClose }: { member: Viewer; onClose: () => void }) {
+  const items: MemoryItem[] = [];
+
+  return (
+    <div className="scrapbook-overlay" role="presentation" onMouseDown={onClose}>
+      <section
+        aria-labelledby="inventory-title"
+        aria-modal="true"
+        className="scrapbook-modal inventory-modal"
+        role="dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <button className="scrapbook-modal-close" onClick={onClose} aria-label="Close inventory" type="button">×</button>
+        <div className="inventory-owner">
+          <div className="inventory-avatar" aria-hidden="true">{member.initials}</div>
+          <div>
+            <p>Memory chest</p>
+            <h2 id="inventory-title">{member.name}’s inventory</h2>
+          </div>
+        </div>
+
+        {items.length ? (
+          <div className="inventory-grid">
+            {items.map((item) => <InventoryItemCard item={item} key={item.id} />)}
+          </div>
+        ) : (
+          <div className="inventory-empty">
+            <div className="empty-chest" aria-hidden="true">
+              <span />
+            </div>
+            <h3>No memory items yet.</h3>
+            <p>Artifacts made from shared memories will collect here.</p>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function UploadMemoryOverlay({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="scrapbook-overlay" role="presentation" onMouseDown={onClose}>
+      <section
+        aria-labelledby="upload-memory-title"
+        aria-modal="true"
+        className="scrapbook-modal upload-memory-modal"
+        role="dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <button className="scrapbook-modal-close" onClick={onClose} aria-label="Close upload memory" type="button">×</button>
+        <header className="overlay-heading">
+          <p>Add to the story</p>
+          <h2 id="upload-memory-title">Upload a memory</h2>
+          <span>A photo becomes something another person can keep.</span>
+        </header>
+
+        <div className="memory-flow-steps" aria-label="Memory upload steps">
+          <span className="active"><strong>1</strong> Upload photo</span>
+          <span><strong>2</strong> Choose member</span>
+          <span><strong>3</strong> Attach memory</span>
+        </div>
+
+        <div className="scrapbook-uploader modal-uploader">
+          <UploadPanel />
+        </div>
+
+        <section className="memory-recipient" aria-labelledby="recipient-title">
+          <span className="memory-step">Next</span>
+          <h3 id="recipient-title">Choose another member</h3>
+          <p>Another real member needs to join this scrapbook before a recipient can be selected.</p>
+          <button disabled type="button">Attach memory</button>
+        </section>
+      </section>
+    </div>
+  );
+}
+
+function ArenaOverlay({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="scrapbook-overlay" role="presentation" onMouseDown={onClose}>
+      <section
+        aria-labelledby="arena-title"
+        aria-modal="true"
+        className="scrapbook-modal arena-modal"
+        role="dialog"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <button className="scrapbook-modal-close" onClick={onClose} aria-label="Close arena preview" type="button">×</button>
+        <div className="arena-emblem" aria-hidden="true">⚔</div>
+        <p className="arena-kicker">The next chapter</p>
+        <h2 id="arena-title">The Arena is taking shape.</h2>
+        <p>Your scrapbook characters and their collected memory artifacts will meet here in a future multiplayer battle experience.</p>
+        <button onClick={onClose} type="button">Back to the scrapbook</button>
+      </section>
+    </div>
+  );
+}
+
+function Scrapbook({ session, viewer }: { session: ScrapbookSession; viewer: Viewer }) {
+  const [inventoryMember, setInventoryMember] = useState<Viewer>();
+  const [overlay, setOverlay] = useState<ScrapbookOverlay>();
+
+  useEffect(() => {
+    if (!inventoryMember && !overlay) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setInventoryMember(undefined);
+        setOverlay(undefined);
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [inventoryMember, overlay]);
+
+  return (
+    <section className="scrapbook-stage" aria-label={`${session.name} scrapbook`}>
+      <div className="scrapbook-book">
+        <div className="scrapbook-binding" aria-hidden="true" />
+        <div className="scrapbook-page scrapbook-page-left">
+          <header className="scrapbook-heading">
+            <p>Our scrapbook</p>
+            <h1>{session.name}</h1>
+            <span>Page code · {session.code}</span>
+          </header>
+
+          <div className="torn-rule" aria-hidden="true" />
+          <div className="member-list-heading">
+            <div>
+              <p>The people in this book</p>
+              <span>Characters are placeholders for now.</span>
+            </div>
+            <strong>1</strong>
+          </div>
+          <div className="scrapbook-members">
+            <MemberCharacter viewer={viewer} onOpenInventory={() => setInventoryMember(viewer)} />
+          </div>
+        </div>
+
+        <div className="scrapbook-page scrapbook-page-right">
+          <div className="scrapbook-actions">
+            <button className="memory-action" onClick={() => setOverlay("upload")} type="button">
+              <span aria-hidden="true">+</span> Upload Memory
+            </button>
+            <button className="arena-action" onClick={() => setOverlay("arena")} type="button">
+              <span aria-hidden="true">⚔</span> Enter Arena
+            </button>
+          </div>
+
+          <header className="memory-heading scrapbook-world-heading">
+            <p>A shared world</p>
+            <h2>Made by remembering.</h2>
+            <span>Every person carries a chest. Every memory you add gives this little world more history.</span>
+          </header>
+
+          <div className="scrapbook-stats" aria-label="Scrapbook details">
+            <div>
+              <strong>1</strong>
+              <span>Member</span>
+            </div>
+            <div>
+              <strong>—</strong>
+              <span>Memory items</span>
+            </div>
+          </div>
+
+          <section className="memory-wall" aria-labelledby="memory-wall-title">
+            <span className="memory-wall-tape" aria-hidden="true" />
+            <p>Start the collection</p>
+            <h3 id="memory-wall-title">The first keepsake starts with you.</h3>
+            <span>Add a memory to someone in this book. Their future artifacts will gather inside their chest.</span>
+            <button onClick={() => setOverlay("upload")} type="button">Add the first memory →</button>
+          </section>
+        </div>
+      </div>
+
+      {inventoryMember
+        ? createPortal(
+            <InventoryOverlay member={inventoryMember} onClose={() => setInventoryMember(undefined)} />,
+            document.body,
+          )
+        : null}
+      {overlay === "upload"
+        ? createPortal(<UploadMemoryOverlay onClose={() => setOverlay(undefined)} />, document.body)
+        : null}
+      {overlay === "arena"
+        ? createPortal(<ArenaOverlay onClose={() => setOverlay(undefined)} />, document.body)
+        : null}
+    </section>
+  );
+}
+
+export function BookExperience({ viewer }: { viewer: Viewer }) {
+  const [step, setStep] = useState<ExperienceStep>("cover");
+  const [dialog, setDialog] = useState<LobbyMode>();
+  const [session, setSession] = useState<ScrapbookSession>();
+  const openingTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(openingTimer.current), []);
+
+  const openBook = () => {
+    setStep("opening");
+    openingTimer.current = window.setTimeout(() => setStep("lobby"), 760);
+  };
+
+  const enterScrapbook = (nextSession: ScrapbookSession) => {
     setDialog(undefined);
-    setToast(message);
+    setSession(nextSession);
+    setStep("scrapbook");
   };
 
   return (
@@ -334,62 +477,39 @@ export function BookExperience() {
       <div className="ambient-glow ambient-glow-one" aria-hidden="true" />
       <div className="ambient-glow ambient-glow-two" aria-hidden="true" />
 
-      <section className="book-hero" aria-label="Interactive Summerhacks book">
-        <div
-          className={dragPreview ? "book-stage is-dragging" : "book-stage"}
-          aria-describedby="book-instructions"
-          onPointerCancel={cancelPageDrag}
-          onPointerDown={startPageDrag}
-          onPointerMove={updatePageDrag}
-          onPointerUp={finishPageDrag}
-        >
-          <BookScene
-            currentSpread={spread}
-            dragPreview={dragPreview}
-            onNext={next}
-            onPrevious={previous}
-          />
+      {step === "cover" || step === "opening" ? (
+        <ClosedBookCover opening={step === "opening"} onStart={openBook} />
+      ) : null}
 
-          {spread === TOTAL_SPREADS - 1 ? (
+      {step !== "scrapbook" ? (
+        <section
+          aria-hidden={step === "cover"}
+          className={
+            step === "cover"
+              ? "book-hero preloaded-book-hero"
+              : step === "opening"
+                ? "book-hero opening-book-hero"
+                : "book-hero"
+          }
+          aria-label="Create or join a scrapbook"
+        >
+          <div className="book-stage setup-book-stage">
+            <BookScene currentSpread={3} onNext={() => undefined} onPrevious={() => undefined} />
             <div className="final-page-overlay">
               <FinalPageActions
                 onCreate={() => setDialog("create")}
                 onJoin={() => setDialog("join")}
               />
             </div>
-          ) : null}
-        </div>
-
-        <div className="book-navigation">
-          <div className="spread-dots" aria-hidden="true">
-            {BOOK_SPREADS.map((item, index) => (
-              <button
-                className={index === spread ? "spread-dot active" : "spread-dot"}
-                key={item.title}
-                onClick={() => setSpread(index)}
-                tabIndex={-1}
-              />
-            ))}
           </div>
-        </div>
-
-        <p className="book-instructions" id="book-instructions">
-          Drag a page left or right to flip · Arrow keys also work
-        </p>
-        <p className="sr-only" aria-live="polite">
-          {progressLabel}
-        </p>
-      </section>
-
-      {dialog ? (
-        <LobbyDialog mode={dialog} onClose={() => setDialog(undefined)} onComplete={finishDialog} />
+          <p className="setup-caption">One book. One shared place for the memories you keep.</p>
+        </section>
       ) : null}
 
-      {toast ? (
-        <div className="lobby-toast" role="status">
-          <span aria-hidden="true">✓</span>
-          {toast}
-        </div>
+      {step === "scrapbook" && session ? <Scrapbook session={session} viewer={viewer} /> : null}
+
+      {dialog ? (
+        <LobbyDialog mode={dialog} onClose={() => setDialog(undefined)} onComplete={enterScrapbook} />
       ) : null}
     </main>
   );
