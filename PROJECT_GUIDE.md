@@ -47,6 +47,9 @@ duplicate version numbers elsewhere unless a compatibility note requires it.
 | `/sign-in/[[...sign-in]]` | Public | Clerk's hosted sign-in component |
 | `/sign-up/[[...sign-up]]` | Public | Clerk's hosted sign-up component |
 | `/dashboard` | Signed-in users | Notes, uploader, and each user's recent records |
+| `/api/scrapbooks` | Signed-in users | Create a room or join one by its invite code |
+| `/api/scrapbooks/[code]` | Room members | Refresh the authenticated room roster |
+| `/api/arena` | Room members and match participants | Queue, synchronize, hit, and leave an arena match |
 | `/api/uploadthing` | Public metadata, authenticated uploads | UploadThing GET/POST route handler |
 
 `src/proxy.ts` initializes Clerk's request integration. Authorization lives next
@@ -140,9 +143,15 @@ user has exactly one current character avatar, and uploading a new photo
 upserts (replaces) that row and deletes the previous UploadThing files rather
 than appending a new record.
 
-All three tables index or uniquely constrain `clerk_user_id`. The value
-deliberately references Clerk by identifier rather than a Postgres foreign key
-because there is no local users table in this starter.
+`scrapbook_rooms` stores a server-generated invite code and the Clerk ID of its
+creator. `scrapbook_members` records which authenticated users joined each room,
+along with their display metadata. `arena_matches` stores the two participant
+IDs, server-loaded inventory snapshots, authoritative match state, and lifecycle
+status. Room rows cascade to their memberships and matches.
+
+Ownership-sensitive tables index Clerk IDs. Those values deliberately reference Clerk by
+identifier rather than a Postgres foreign key because there is no local users
+table in this starter.
 
 The runtime connection is lazy. Importing `src/db/index.ts` does not connect or
 throw during a public-page build. `getDb()` validates `DATABASE_URL` when a
@@ -232,27 +241,33 @@ internal error string, mirroring the `uploads` failure pattern.
 The root Server Component (`src/app/page.tsx`) reads the current user's
 `user_avatars` row and passes `avatarUrl` into the scrapbook `Viewer`. The
 scrapbook UI (`MemberCharacter`, `SelectedMemberProfile`) renders that image in
-place of the placeholder stick figure once it exists, and the arena game
-(`src/components/arena/arena-game.tsx`) loads the same image as a billboard
-sprite representing the player's body, visible in the arena's third-person
-camera mode (toggle with the `V` key or the on-screen button).
+place of the placeholder stick figure once it exists. The arena also displays
+the current player's generated character alongside the authenticated match UI.
 
 ## Scrapbook experience
 
 The root route authenticates with Clerk and passes only a serializable viewer
-ID, display name, initials, and (once generated) character-avatar URL to the
-interactive book. The create/join code
-generation and page session currently live in client state, as they did in the
-original prototype. There are no scrapbook, invite, or membership tables or
-server mutations yet. Consequently, the only member the scrapbook can render
-from real data is the signed-in Clerk user; do not invent other members or treat
-an entered code as durable authorization.
+ID, display name, initials, and generated character-avatar URL to the
+interactive book. Creating a scrapbook now
+persists a room and owner membership. Joining by code upserts a membership for
+the authenticated Clerk user. The client polls the protected room endpoint for
+the durable member roster, so separate accounts and devices see one another in
+the same book.
 
-UploadThing still authenticates every upload on the server. In the scrapbook UI
-the uploader is reachable only after the signed-in visitor creates or joins the
-current client-side page session. Durable scrapbook membership and recipient
-ownership checks require a future data model and server-side authorization
-design before uploads can be attached to another member.
+The arena preloads the signed-in player's completed artifact images before it
+enters that room's queue. The authenticated arena endpoint loads each inventory
+from owner-scoped database records, pairs exactly two ready room members, and is
+authoritative for countdown transitions, first-hit resolution, round scores,
+memory flashes, and forfeits. Clients poll the endpoint for synchronization;
+this works across browser profiles and devices without trusting client-supplied
+user IDs or inventories. The pure match state machine and memory-flash renderer
+remain separate from this transport so a lower-latency realtime layer can
+replace polling later without changing the game rules or visual treatment.
+
+UploadThing still authenticates every upload on the server. Room membership
+does not transfer upload ownership: generated artifacts remain attached to the
+authenticated uploader. Attaching a new upload to another room member still
+requires a dedicated recipient field and server-side authorization design.
 
 ## Server and client boundaries
 

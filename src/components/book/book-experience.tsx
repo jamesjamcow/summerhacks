@@ -18,7 +18,7 @@ const BookScene = dynamic(() => import("./book-scene"), {
   ),
 });
 
-const ArenaGame = dynamic(() => import("@/components/arena/arena-game"), {
+const ArenaMatch = dynamic(() => import("@/components/arena/arena-match"), {
   ssr: false,
   loading: () => <div className="arena-game-loading">Loading arena…</div>,
 });
@@ -74,13 +74,6 @@ function FinalPageActions({
   );
 }
 
-function generateLobbyCode() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const values = new Uint32Array(6);
-  crypto.getRandomValues(values);
-  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
-}
-
 function LobbyDialog({
   mode,
   onClose,
@@ -92,26 +85,40 @@ function LobbyDialog({
 }) {
   const [name, setName] = useState("");
   const [joinCode, setJoinCode] = useState("");
-  const [createdCode, setCreatedCode] = useState<string>();
+  const [createdSession, setCreatedSession] = useState<ScrapbookSession>();
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string>();
+  const [pending, setPending] = useState(false);
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-
-    if (mode === "create") {
-      setCreatedCode(generateLobbyCode());
-      return;
+    setPending(true);
+    setError(undefined);
+    try {
+      const response = await fetch("/api/scrapbooks", {
+        body: JSON.stringify(
+          mode === "create"
+            ? { action: "create", name }
+            : { action: "join", code: joinCode },
+        ),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const result = await response.json() as ScrapbookSession & { error?: string };
+      if (!response.ok) throw new Error(result.error || "Could not enter the scrapbook");
+      if (mode === "create") setCreatedSession({ code: result.code, name: result.name });
+      else onComplete({ code: result.code, name: result.name });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not enter the scrapbook");
+    } finally {
+      setPending(false);
     }
-
-    const normalizedCode = joinCode.trim().toUpperCase();
-    if (normalizedCode.length < 4) return;
-    onComplete({ code: normalizedCode, name: `Scrapbook ${normalizedCode}` });
   };
 
   const copyCode = async () => {
-    if (!createdCode) return;
+    if (!createdSession) return;
     try {
-      await navigator.clipboard.writeText(createdCode);
+      await navigator.clipboard.writeText(createdSession.code);
       setCopied(true);
     } catch {
       setCopied(false);
@@ -135,30 +142,30 @@ function LobbyDialog({
 
         <p className="dialog-kicker">{mode === "create" ? "New scrapbook" : "Have an invite?"}</p>
         <h2 id="lobby-dialog-title">
-          {createdCode
+          {createdSession
             ? "Your page is ready."
             : mode === "create"
               ? "What should we call it?"
               : "Join someone’s page."}
         </h2>
         <p className="dialog-copy">
-          {createdCode
+          {createdSession
             ? "Share this code with the people you want in the scrapbook."
             : mode === "create"
               ? "Give this scrapbook a name. You can fill it together from there."
               : "Enter the page code from your invitation."}
         </p>
 
-        {createdCode ? (
+        {createdSession ? (
           <div className="created-lobby">
-            <span className="created-name">{name || "Untitled page"}</span>
+            <span className="created-name">{createdSession.name}</span>
             <button className="lobby-code" onClick={copyCode} type="button">
-              <span>{createdCode}</span>
+              <span>{createdSession.code}</span>
               <small>{copied ? "Copied" : "Copy code"}</small>
             </button>
             <button
               className="dialog-primary"
-              onClick={() => onComplete({ code: createdCode, name: name || "Untitled page" })}
+              onClick={() => onComplete(createdSession)}
               type="button"
             >
               Open the scrapbook
@@ -183,8 +190,9 @@ function LobbyDialog({
               required
               value={mode === "create" ? name : joinCode}
             />
-            <button className="dialog-primary" type="submit">
-              {mode === "create" ? "Create this page" : "Join the page"}
+            {error ? <p className="dialog-error" role="alert">{error}</p> : null}
+            <button className="dialog-primary" disabled={pending} type="submit">
+              {pending ? "Opening…" : mode === "create" ? "Create this page" : "Join the page"}
             </button>
           </form>
         )}
@@ -453,10 +461,14 @@ function ArenaOverlay({
   characterImageUrl,
   items,
   onClose,
+  roomCode,
+  viewer,
 }: {
   characterImageUrl?: string;
   items: MemoryItem[];
   onClose: () => void;
+  roomCode: string;
+  viewer: Viewer;
 }) {
   return (
     <div className="scrapbook-overlay" role="presentation" onMouseDown={onClose}>
@@ -469,7 +481,7 @@ function ArenaOverlay({
       >
         <h2 className="sr-only" id="arena-title">Memory Arena</h2>
         <button className="scrapbook-modal-close arena-game-close" onClick={onClose} aria-label="Close arena" type="button">×</button>
-        <ArenaGame characterImageUrl={characterImageUrl} projectileImageUrl={items[0]?.artifactImageUrl} />
+        <ArenaMatch characterImageUrl={characterImageUrl} items={items} roomCode={roomCode} viewer={viewer} />
       </section>
     </div>
   );
@@ -485,7 +497,7 @@ function Scrapbook({
   viewer: Viewer;
 }) {
   const [viewer, setViewer] = useState(initialViewer);
-  const members = [viewer];
+  const [members, setMembers] = useState<Viewer[]>([initialViewer]);
   const [selectedMemberId, setSelectedMemberId] = useState<string>();
   const [overlay, setOverlay] = useState<ScrapbookOverlay>();
   const [artifacts, setArtifacts] = useState(initialArtifacts);
@@ -493,6 +505,9 @@ function Scrapbook({
 
   const handleAvatarGenerated = (avatarUrl: string) => {
     setViewer((current) => ({ ...current, avatarUrl }));
+    setMembers((current) => current.map((member) =>
+      member.id === initialViewer.id ? { ...member, avatarUrl } : member,
+    ));
   };
 
   const addArtifacts = (newArtifacts: MemoryArtifact[]) => {
@@ -515,6 +530,29 @@ function Scrapbook({
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [selectedMemberId, overlay]);
 
+  useEffect(() => {
+    let cancelled = false;
+    const syncMembers = async () => {
+      try {
+        const response = await fetch(`/api/scrapbooks/${encodeURIComponent(session.code)}`, { cache: "no-store" });
+        const result = await response.json() as { members?: Viewer[] };
+        if (response.ok && result.members && !cancelled) {
+          setMembers(result.members.map((member) =>
+            member.id === viewer.id ? { ...member, avatarUrl: viewer.avatarUrl } : member,
+          ));
+        }
+      } catch {
+        // Keep the last known member list while the room connection recovers.
+      }
+    };
+    void syncMembers();
+    const timer = window.setInterval(() => { void syncMembers(); }, 3_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [session.code, viewer.avatarUrl, viewer.id]);
+
   return (
     <section className="scrapbook-stage" aria-label={`${session.name} scrapbook`}>
       <div className="scrapbook-book">
@@ -532,7 +570,7 @@ function Scrapbook({
               <p>The people in this book</p>
               <span>Characters are placeholders for now.</span>
             </div>
-            <strong>1</strong>
+            <strong>{members.length}</strong>
           </div>
           <div className="scrapbook-members">
             {members.map((member) => (
@@ -550,7 +588,7 @@ function Scrapbook({
           {selectedMember ? (
             <SelectedMemberProfile
               currentUserId={viewer.id}
-              items={artifacts}
+              items={selectedMember.id === viewer.id ? artifacts : []}
               member={selectedMember}
               onArena={() => setOverlay("arena")}
               onAvatarGenerated={handleAvatarGenerated}
@@ -609,6 +647,8 @@ function Scrapbook({
               characterImageUrl={viewer.avatarUrl}
               items={artifacts}
               onClose={() => setOverlay(undefined)}
+              roomCode={session.code}
+              viewer={viewer}
             />,
             document.body,
           )

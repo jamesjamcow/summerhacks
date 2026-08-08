@@ -1,4 +1,16 @@
-import { index, integer, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import {
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
+
+import type { ArenaMatchState, ArenaPlayer } from "@/components/arena/arena-types";
 
 export const notes = pgTable(
   "notes",
@@ -59,3 +71,59 @@ export const userAvatars = pgTable("user_avatars", {
     .defaultNow()
     .notNull(),
 });
+
+export const scrapbookRooms = pgTable(
+  "scrapbook_rooms",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    ownerClerkUserId: text("owner_clerk_user_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("scrapbook_rooms_code_unique").on(table.code),
+    index("scrapbook_rooms_owner_idx").on(table.ownerClerkUserId),
+  ],
+);
+
+export const scrapbookMembers = pgTable(
+  "scrapbook_members",
+  {
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => scrapbookRooms.id, { onDelete: "cascade" }),
+    clerkUserId: text("clerk_user_id").notNull(),
+    displayName: text("display_name").notNull(),
+    initials: text("initials").notNull(),
+    joinedAt: timestamp("joined_at", { withTimezone: true }).defaultNow().notNull(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.roomId, table.clerkUserId] }),
+    index("scrapbook_members_user_idx").on(table.clerkUserId),
+  ],
+);
+
+export const arenaMatches = pgTable(
+  "arena_matches",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => scrapbookRooms.id, { onDelete: "cascade" }),
+    playerOneClerkUserId: text("player_one_clerk_user_id").notNull(),
+    playerTwoClerkUserId: text("player_two_clerk_user_id"),
+    playerOne: jsonb("player_one").$type<ArenaPlayer>().notNull(),
+    playerTwo: jsonb("player_two").$type<ArenaPlayer>(),
+    state: jsonb("state").$type<ArenaMatchState>().notNull(),
+    status: text("status").default("waiting").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("arena_matches_room_status_idx").on(table.roomId, table.status),
+    index("arena_matches_player_one_idx").on(table.playerOneClerkUserId),
+    index("arena_matches_player_two_idx").on(table.playerTwoClerkUserId),
+  ],
+);
