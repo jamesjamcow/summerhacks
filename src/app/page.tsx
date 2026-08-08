@@ -3,7 +3,7 @@ import { and, desc, eq, isNotNull } from "drizzle-orm";
 
 import { BookExperience } from "@/components/book/book-experience";
 import { getDb } from "@/db";
-import { uploads } from "@/db/schema";
+import { uploads, userAvatars } from "@/db/schema";
 
 export default async function HomePage() {
   await auth.protect();
@@ -55,10 +55,26 @@ export default async function HomePage() {
       : [],
   );
 
+  const [avatar] = await getDb()
+    .select({ generatedFileUrl: userAvatars.generatedFileUrl })
+    .from(userAvatars)
+    .where(
+      and(
+        eq(userAvatars.clerkUserId, user.id),
+        eq(userAvatars.processingStatus, "complete"),
+        isNotNull(userAvatars.generatedFileUrl),
+      ),
+    );
+
   return (
     <BookExperience
       initialArtifacts={initialArtifacts}
-      viewer={{ id: user.id, initials, name }}
+      viewer={{
+        id: user.id,
+        initials,
+        name,
+        avatarUrl: avatar?.generatedFileUrl ?? undefined,
+      }}
     />
   );
 }

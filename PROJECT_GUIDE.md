@@ -133,9 +133,16 @@ status, the extracted key object, generated-file metadata, failure detail, and
 processing timestamps. A single row is the durable one-to-one link between one
 source memory and its one generated artifact.
 
-Both tables index `clerk_user_id`. The value deliberately references Clerk by
-identifier rather than a Postgres foreign key because there is no local users
-table in this starter.
+`user_avatars` contains the authenticated owner's uploaded selfie metadata plus
+processing status, generated character-avatar file metadata, failure detail, and
+processing timestamps. Unlike `uploads`, `clerk_user_id` is unique here: each
+user has exactly one current character avatar, and uploading a new photo
+upserts (replaces) that row and deletes the previous UploadThing files rather
+than appending a new record.
+
+All three tables index or uniquely constrain `clerk_user_id`. The value
+deliberately references Clerk by identifier rather than a Postgres foreign key
+because there is no local users table in this starter.
 
 The runtime connection is lazy. Importing `src/db/index.ts` does not connect or
 throw during a public-page build. `getDb()` validates `DATABASE_URL` when a
@@ -206,10 +213,35 @@ failed` and an internal error string so the failure is visible and retryable.
 Production code may add a retry/reconciliation job. A future deletion feature
 must delete both UploadThing objects and the owner-scoped Neon row.
 
+## Character avatar pipeline
+
+The `characterPhoto` UploadThing route lets the signed-in user upload one photo
+of themselves (image only, up to 4 MB, single file). Unlike `workspaceFile`,
+its `onUploadComplete` callback skips the key-object extraction step and calls
+`createCharacterAvatar()` in `src/lib/gemini.ts` directly: the photo is sent to
+the same Gemini image model as an image-to-image edit, styled with a prompt
+that reuses the project's black-marker folk-art look but targets a full-body
+character likeness (hairstyle, build, notable accessories) instead of a single
+object. The result is uploaded through UploadThing and upserted into
+`user_avatars` keyed by `clerk_user_id`; any previous source and generated
+files for that user are deleted so re-uploading a photo replaces the avatar
+rather than accumulating orphaned blobs. Failures leave the prior successful
+avatar (if any) untouched and record `processing_status = failed` with an
+internal error string, mirroring the `uploads` failure pattern.
+
+The root Server Component (`src/app/page.tsx`) reads the current user's
+`user_avatars` row and passes `avatarUrl` into the scrapbook `Viewer`. The
+scrapbook UI (`MemberCharacter`, `SelectedMemberProfile`) renders that image in
+place of the placeholder stick figure once it exists, and the arena game
+(`src/components/arena/arena-game.tsx`) loads the same image as a billboard
+sprite representing the player's body, visible in the arena's third-person
+camera mode (toggle with the `V` key or the on-screen button).
+
 ## Scrapbook experience
 
 The root route authenticates with Clerk and passes only a serializable viewer
-ID, display name, and initials to the interactive book. The create/join code
+ID, display name, initials, and (once generated) character-avatar URL to the
+interactive book. The create/join code
 generation and page session currently live in client state, as they did in the
 original prototype. There are no scrapbook, invite, or membership tables or
 server mutations yet. Consequently, the only member the scrapbook can render

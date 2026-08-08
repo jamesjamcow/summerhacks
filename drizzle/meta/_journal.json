@@ -15,6 +15,13 @@
       "when": 1786221082536,
       "tag": "0001_lovely_chat",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786229380384,
+      "tag": "0002_noisy_power_pack",
+      "breakpoints": true
     }
   ]
 }

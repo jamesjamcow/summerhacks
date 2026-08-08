@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+import { CharacterPhotoUpload } from "@/components/character-photo-upload";
 import { UploadPanel } from "@/components/upload-panel";
 import type { MemoryArtifact } from "@/lib/memory-artifacts";
 
@@ -29,6 +30,7 @@ type Viewer = {
   id: string;
   name: string;
   initials: string;
+  avatarUrl?: string;
 };
 
 type ScrapbookSession = {
@@ -259,13 +261,22 @@ function MemberCharacter({
     >
       <p className="member-name">{viewer.name}</p>
       <div className="member-scene">
-        <div className="stick-person" aria-label={`${viewer.name} character placeholder`} role="img">
-          <span className="stick-head">{viewer.initials}</span>
-          <span className="stick-body" />
-          <span className="stick-arms" />
-          <span className="stick-leg stick-leg-left" />
-          <span className="stick-leg stick-leg-right" />
-        </div>
+        {viewer.avatarUrl ? (
+          <div
+            aria-label={`${viewer.name} character`}
+            className="member-avatar"
+            role="img"
+            style={{ backgroundImage: `url(${viewer.avatarUrl})` }}
+          />
+        ) : (
+          <div className="stick-person" aria-label={`${viewer.name} character placeholder`} role="img">
+            <span className="stick-head">{viewer.initials}</span>
+            <span className="stick-body" />
+            <span className="stick-arms" />
+            <span className="stick-leg stick-leg-left" />
+            <span className="stick-leg stick-leg-right" />
+          </div>
+        )}
         <span className="member-chest" aria-hidden="true">
           <span className="chest-lid" />
           <span className="chest-lock" />
@@ -347,6 +358,7 @@ function SelectedMemberProfile({
   items,
   member,
   onArena,
+  onAvatarGenerated,
   onBack,
   onUpload,
 }: {
@@ -354,6 +366,7 @@ function SelectedMemberProfile({
   items: MemoryItem[];
   member: Viewer;
   onArena: () => void;
+  onAvatarGenerated: (avatarUrl: string) => void;
   onBack: () => void;
   onUpload: () => void;
 }) {
@@ -367,11 +380,20 @@ function SelectedMemberProfile({
       </div>
 
       <header className="selected-member-header">
-        <div className="selected-member-portrait" aria-hidden="true">
-          <span>{member.initials}</span>
-          <i className="portrait-body" />
-          <i className="portrait-arms" />
-        </div>
+        {member.avatarUrl ? (
+          <div
+            aria-label={`${member.name} character`}
+            className="selected-member-avatar"
+            role="img"
+            style={{ backgroundImage: `url(${member.avatarUrl})` }}
+          />
+        ) : (
+          <div className="selected-member-portrait" aria-hidden="true">
+            <span>{member.initials}</span>
+            <i className="portrait-body" />
+            <i className="portrait-arms" />
+          </div>
+        )}
         <div>
           <p>{isCurrentUser ? "You · Memory keeper" : "Scrapbook member"}</p>
           <h2>{member.name}</h2>
@@ -415,11 +437,27 @@ function SelectedMemberProfile({
           <button onClick={onUpload} type="button">+ Upload Memory for {member.name}</button>
         )}
       </div>
+
+      {isCurrentUser ? (
+        <div className="profile-character-action">
+          <h3>{member.avatarUrl ? "Update your character" : "Create your character"}</h3>
+          <p>Upload a photo of yourself and we&apos;ll draw your character for the scrapbook and arena.</p>
+          <CharacterPhotoUpload onAvatarGenerated={onAvatarGenerated} />
+        </div>
+      ) : null}
     </div>
   );
 }
 
-function ArenaOverlay({ items, onClose }: { items: MemoryItem[]; onClose: () => void }) {
+function ArenaOverlay({
+  characterImageUrl,
+  items,
+  onClose,
+}: {
+  characterImageUrl?: string;
+  items: MemoryItem[];
+  onClose: () => void;
+}) {
   return (
     <div className="scrapbook-overlay" role="presentation" onMouseDown={onClose}>
       <section
@@ -431,7 +469,7 @@ function ArenaOverlay({ items, onClose }: { items: MemoryItem[]; onClose: () => 
       >
         <h2 className="sr-only" id="arena-title">Memory Arena</h2>
         <button className="scrapbook-modal-close arena-game-close" onClick={onClose} aria-label="Close arena" type="button">×</button>
-        <ArenaGame projectileImageUrl={items[0]?.artifactImageUrl} />
+        <ArenaGame characterImageUrl={characterImageUrl} projectileImageUrl={items[0]?.artifactImageUrl} />
       </section>
     </div>
   );
@@ -440,17 +478,22 @@ function ArenaOverlay({ items, onClose }: { items: MemoryItem[]; onClose: () => 
 function Scrapbook({
   initialArtifacts,
   session,
-  viewer,
+  viewer: initialViewer,
 }: {
   initialArtifacts: MemoryArtifact[];
   session: ScrapbookSession;
   viewer: Viewer;
 }) {
+  const [viewer, setViewer] = useState(initialViewer);
   const members = [viewer];
   const [selectedMemberId, setSelectedMemberId] = useState<string>();
   const [overlay, setOverlay] = useState<ScrapbookOverlay>();
   const [artifacts, setArtifacts] = useState(initialArtifacts);
   const selectedMember = members.find((member) => member.id === selectedMemberId);
+
+  const handleAvatarGenerated = (avatarUrl: string) => {
+    setViewer((current) => ({ ...current, avatarUrl }));
+  };
 
   const addArtifacts = (newArtifacts: MemoryArtifact[]) => {
     setArtifacts((current) => {
@@ -510,6 +553,7 @@ function Scrapbook({
               items={artifacts}
               member={selectedMember}
               onArena={() => setOverlay("arena")}
+              onAvatarGenerated={handleAvatarGenerated}
               onBack={() => setSelectedMemberId(undefined)}
               onUpload={() => setOverlay("upload")}
             />
@@ -560,7 +604,14 @@ function Scrapbook({
           )
         : null}
       {overlay === "arena"
-        ? createPortal(<ArenaOverlay items={artifacts} onClose={() => setOverlay(undefined)} />, document.body)
+        ? createPortal(
+            <ArenaOverlay
+              characterImageUrl={viewer.avatarUrl}
+              items={artifacts}
+              onClose={() => setOverlay(undefined)}
+            />,
+            document.body,
+          )
         : null}
     </section>
   );
