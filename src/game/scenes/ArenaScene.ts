@@ -1,7 +1,8 @@
 import * as Phaser from "phaser";
-import { BattleState, Character, Item } from "@/engine/types";
+import { BattleEvent, BattleState, Character, Item, ParticipantSlot } from "@/engine/types";
 import { submitAction } from "@/engine/localBattleClient";
 import { ARENA_BACKGROUND_KEY } from "../assetKeys";
+import { formatAbilitySummary } from "../abilityDisplay";
 import { HealthBar } from "../objects/HealthBar";
 import { CharacterSprite } from "../objects/CharacterSprite";
 import { eventBus } from "../eventBus";
@@ -12,6 +13,14 @@ interface ArenaSceneData {
   opponentCharacter: Character;
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  poison: "Poison",
+  buff: "Buffed",
+  debuff: "Debuffed",
+  shield: "Shield",
+  stun: "Stunned",
+};
+
 export class ArenaScene extends Phaser.Scene {
   private battleState!: BattleState;
   private playerCharacter!: Character;
@@ -21,6 +30,8 @@ export class ArenaScene extends Phaser.Scene {
   private opponentSprite?: CharacterSprite;
   private playerHealthBar?: HealthBar;
   private opponentHealthBar?: HealthBar;
+  private playerStatusText?: Phaser.GameObjects.Text;
+  private opponentStatusText?: Phaser.GameObjects.Text;
   private actionButtons: Phaser.GameObjects.Text[] = [];
   private logText?: Phaser.GameObjects.Text;
   private overlay?: Phaser.GameObjects.Container;
@@ -76,6 +87,15 @@ export class ArenaScene extends Phaser.Scene {
       this.opponentCharacter.displayName,
     );
 
+    this.playerStatusText = this.add.text(120, 145, "", {
+      fontSize: "12px",
+      color: "#ffe066",
+    });
+    this.opponentStatusText = this.add.text(620, 145, "", {
+      fontSize: "12px",
+      color: "#ffe066",
+    });
+
     this.refreshHealthBars();
 
     this.logText = this.add.text(30, 400, "", {
@@ -91,6 +111,18 @@ export class ArenaScene extends Phaser.Scene {
     return character.inventory.items.find((item) => item.id === itemId);
   }
 
+  private isStunned(slot: ParticipantSlot): boolean {
+    return this.battleState.participants[slot].statusEffects.some(
+      (effect) => effect.kind === "stun",
+    );
+  }
+
+  private formatStatusEffects(slot: ParticipantSlot): string {
+    return this.battleState.participants[slot].statusEffects
+      .map((effect) => `${STATUS_LABELS[effect.kind] ?? effect.kind} (${effect.remainingTurns})`)
+      .join(", ");
+  }
+
   private refreshHealthBars() {
     this.playerHealthBar?.setHealth(
       this.battleState.participants.player.currentHealth,
@@ -100,32 +132,50 @@ export class ArenaScene extends Phaser.Scene {
       this.battleState.participants.opponent.currentHealth,
       this.opponentCharacter.displayName,
     );
+    this.playerStatusText?.setText(this.formatStatusEffects("player"));
+    this.opponentStatusText?.setText(this.formatStatusEffects("opponent"));
   }
 
   private renderActionBar() {
     this.actionButtons.forEach((btn) => btn.destroy());
     this.actionButtons = [];
 
-    const items = this.battleState.participants.player.selectedItemIds
-      .map((id) => this.getItem(this.playerCharacter, id))
-      .filter((item): item is Item => Boolean(item));
-
     const isPlayerTurn =
       this.battleState.activeSlot === "player" &&
       this.battleState.status === "in_progress";
+
+    if (isPlayerTurn && this.isStunned("player")) {
+      const skipButton = this.add
+        .text(30, 460, "Skip Turn (Stunned)", {
+          fontSize: "16px",
+          color: "#ffffff",
+          backgroundColor: "#6a3a3a",
+          padding: { x: 12, y: 8 },
+        })
+        .setInteractive({ useHandCursor: !this.busy })
+        .on("pointerdown", () => this.onPlayerSkipTurn());
+      this.actionButtons.push(skipButton);
+      return;
+    }
+
+    const items = this.battleState.participants.player.selectedItemIds
+      .map((id) => this.getItem(this.playerCharacter, id))
+      .filter((item): item is Item => Boolean(item));
 
     items.forEach((item, index) => {
       const cooldown =
         this.battleState.participants.player.cooldowns[item.id] ?? 0;
       const disabled = !isPlayerTurn || cooldown > 0 || this.busy;
-      const label = cooldown > 0 ? `${item.name} (CD ${cooldown})` : item.name;
+      const summary = formatAbilitySummary(item.ability);
+      const label = cooldown > 0 ? `${item.name} (CD ${cooldown})` : `${item.name} — ${summary}`;
 
       const button = this.add
         .text(30 + index * 180, 460, label, {
-          fontSize: "16px",
+          fontSize: "14px",
           color: disabled ? "#666666" : "#ffffff",
           backgroundColor: disabled ? "#222222" : "#3a3a6a",
           padding: { x: 12, y: 8 },
+          wordWrap: { width: 170 },
         })
         .setInteractive({ useHandCursor: !disabled });
 
@@ -173,6 +223,36 @@ export class ArenaScene extends Phaser.Scene {
     this.time.delayedCall(700, () => this.maybeRunCpuTurn());
   }
 
+  private async onPlayerSkipTurn() {
+    if (this.busy) return;
+    this.busy = true;
+    this.renderActionBar();
+
+    const { state, events } = await submitAction(
+      this.battleState,
+      { type: "SKIP_TURN", actorSlot: "player" },
+      {
+        playerCharacter: this.playerCharacter,
+        opponentCharacter: this.opponentCharacter,
+      },
+    );
+
+    this.battleState = state;
+    this.applyEvents(events, "player");
+    this.refreshHealthBars();
+
+    if (this.battleState.status !== "in_progress") {
+      this.busy = false;
+      this.renderActionBar();
+      this.endBattle();
+      return;
+    }
+
+    this.busy = false;
+    this.renderActionBar();
+    this.time.delayedCall(700, () => this.maybeRunCpuTurn());
+  }
+
   private async maybeRunCpuTurn() {
     if (
       this.battleState.status !== "in_progress" ||
@@ -182,34 +262,19 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     const opponent = this.battleState.participants.opponent;
-    const usableItemId = opponent.selectedItemIds.find(
-      (id) => (opponent.cooldowns[id] ?? 0) <= 0,
-    );
+    const stunned = this.isStunned("opponent");
+    const usableItemId = stunned
+      ? undefined
+      : opponent.selectedItemIds.find((id) => (opponent.cooldowns[id] ?? 0) <= 0);
 
-    if (!usableItemId) {
-      const { state, events } = await submitAction(
-        this.battleState,
-        { type: "FORFEIT", actorSlot: "opponent" },
-        {
-          playerCharacter: this.playerCharacter,
-          opponentCharacter: this.opponentCharacter,
-        },
-      );
-      this.battleState = state;
-      this.applyEvents(events, "opponent");
-      this.refreshHealthBars();
-      this.endBattle();
-      return;
-    }
+    const action = usableItemId
+      ? { type: "USE_ITEM" as const, actorSlot: "opponent" as const, itemId: usableItemId }
+      : { type: "SKIP_TURN" as const, actorSlot: "opponent" as const };
 
-    const { state, events } = await submitAction(
-      this.battleState,
-      { type: "USE_ITEM", actorSlot: "opponent", itemId: usableItemId },
-      {
-        playerCharacter: this.playerCharacter,
-        opponentCharacter: this.opponentCharacter,
-      },
-    );
+    const { state, events } = await submitAction(this.battleState, action, {
+      playerCharacter: this.playerCharacter,
+      opponentCharacter: this.opponentCharacter,
+    });
 
     this.battleState = state;
     this.applyEvents(events, "opponent");
@@ -221,26 +286,81 @@ export class ArenaScene extends Phaser.Scene {
     }
   }
 
-  private applyEvents(
-    events: { type: string; payload: unknown }[],
-    actor: "player" | "opponent",
-  ) {
+  private applyEvents(events: BattleEvent[], actor: ParticipantSlot) {
+    const actorName =
+      actor === "player" ? this.playerCharacter.displayName : this.opponentCharacter.displayName;
+
     for (const event of events) {
-      if (event.type === "DAMAGE_DEALT") {
-        const payload = event.payload as {
-          itemId: string;
-          damageDealt: number;
-          targetSlot: "player" | "opponent";
-        };
-        const targetSprite =
-          payload.targetSlot === "player" ? this.playerSprite : this.opponentSprite;
-        targetSprite?.playHitFlash();
-        this.appendLog(
-          `${actor === "player" ? this.playerCharacter.displayName : this.opponentCharacter.displayName} dealt ${payload.damageDealt} damage.`,
-        );
-      }
-      if (event.type === "INVALID_ACTION") {
-        this.appendLog("Action rejected by battle engine.");
+      switch (event.type) {
+        case "DAMAGE_DEALT": {
+          const payload = event.payload as {
+            damageDealt: number;
+            targetSlot: ParticipantSlot;
+          };
+          const targetSprite =
+            payload.targetSlot === "player" ? this.playerSprite : this.opponentSprite;
+          targetSprite?.playHitFlash();
+          if (payload.damageDealt > 0) {
+            this.appendLog(`${actorName} dealt ${payload.damageDealt} damage.`);
+          }
+          break;
+        }
+        case "SHIELD_ABSORBED": {
+          const payload = event.payload as { absorbed: number; targetSlot: ParticipantSlot };
+          const name =
+            payload.targetSlot === "player" ? this.playerCharacter.displayName : this.opponentCharacter.displayName;
+          this.appendLog(`${name}'s shield absorbed ${payload.absorbed} damage.`);
+          break;
+        }
+        case "POISON_TICK": {
+          const payload = event.payload as { slot: ParticipantSlot; damage: number };
+          const name =
+            payload.slot === "player" ? this.playerCharacter.displayName : this.opponentCharacter.displayName;
+          const sprite = payload.slot === "player" ? this.playerSprite : this.opponentSprite;
+          sprite?.playHitFlash();
+          this.appendLog(`${name} takes ${payload.damage} poison damage.`);
+          break;
+        }
+        case "POISON_APPLIED": {
+          const payload = event.payload as { targetSlot: ParticipantSlot };
+          const name =
+            payload.targetSlot === "player" ? this.playerCharacter.displayName : this.opponentCharacter.displayName;
+          this.appendLog(`${name} is poisoned.`);
+          break;
+        }
+        case "BUFF_APPLIED":
+          this.appendLog(`${actorName} is buffed.`);
+          break;
+        case "DEBUFF_APPLIED": {
+          const payload = event.payload as { slot: ParticipantSlot };
+          const name =
+            payload.slot === "player" ? this.playerCharacter.displayName : this.opponentCharacter.displayName;
+          this.appendLog(`${name} is debuffed.`);
+          break;
+        }
+        case "HEAL_APPLIED": {
+          const payload = event.payload as { healedAmount: number };
+          this.appendLog(`${actorName} heals ${payload.healedAmount} HP.`);
+          break;
+        }
+        case "SHIELD_APPLIED":
+          this.appendLog(`${actorName} raises a shield.`);
+          break;
+        case "STUN_APPLIED": {
+          const payload = event.payload as { slot: ParticipantSlot };
+          const name =
+            payload.slot === "player" ? this.playerCharacter.displayName : this.opponentCharacter.displayName;
+          this.appendLog(`${name} is stunned!`);
+          break;
+        }
+        case "TURN_SKIPPED":
+          this.appendLog(`${actorName} skips their turn.`);
+          break;
+        case "INVALID_ACTION":
+          this.appendLog("Action rejected by battle engine.");
+          break;
+        default:
+          break;
       }
     }
   }

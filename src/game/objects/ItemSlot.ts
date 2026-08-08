@@ -1,6 +1,7 @@
 import * as Phaser from "phaser";
 import { Item } from "@/engine/types";
 import { fallbackColorForKey } from "../assetKeys";
+import { categoryColorHex, formatAbilitySummary } from "../abilityDisplay";
 
 export class ItemSlot extends Phaser.GameObjects.Container {
   readonly item: Item;
@@ -27,14 +28,23 @@ export class ItemSlot extends Phaser.GameObjects.Container {
       .setOrigin(0.5, 0)
       .setWordWrapWidth(100);
 
-    const damageLabel = scene.add
-      .text(0, -10, `${item.ability.damage} dmg`, {
-        fontSize: "16px",
-        color: "#ffffff",
+    const categoryLabel = scene.add
+      .text(0, -34, item.ability.category.toUpperCase(), {
+        fontSize: "10px",
+        color: categoryColorHex(item.ability.category),
       })
       .setOrigin(0.5, 0.5);
 
-    this.add([this.box, nameLabel, damageLabel]);
+    const summaryLabel = scene.add
+      .text(0, -10, formatAbilitySummary(item.ability), {
+        fontSize: "13px",
+        color: "#ffffff",
+        align: "center",
+      })
+      .setOrigin(0.5, 0.5)
+      .setWordWrapWidth(96);
+
+    this.add([this.box, categoryLabel, nameLabel, summaryLabel]);
     scene.add.existing(this);
 
     this.box.on("pointerdown", () => {
