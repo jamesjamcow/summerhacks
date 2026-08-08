@@ -29,6 +29,36 @@ type DragPreview = { direction: DragDirection; progress: number };
 
 const DRAG_AXIS_SLOP = 8;
 
+function FinalPageActions({
+  onCreate,
+  onJoin,
+}: {
+  onCreate: () => void;
+  onJoin: () => void;
+}) {
+  return (
+    <article
+      className="model-page-actions"
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <p>The last page</p>
+      <h2>Your next page starts here.</h2>
+      <span>Open a room of your own, or arrive with a code.</span>
+      <div className="model-page-buttons">
+        <button onClick={onCreate} type="button">
+          <span className="button-mark" aria-hidden="true">+</span>
+          Create a new page
+        </button>
+        <button className="secondary" onClick={onJoin} type="button">
+          <span className="button-mark arrow" aria-hidden="true">→</span>
+          Join a page
+        </button>
+      </div>
+    </article>
+  );
+}
+
 function generateLobbyCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   const values = new Uint32Array(6);
@@ -316,11 +346,18 @@ export function BookExperience() {
           <BookScene
             currentSpread={spread}
             dragPreview={dragPreview}
-            onCreate={() => setDialog("create")}
-            onJoin={() => setDialog("join")}
             onNext={next}
             onPrevious={previous}
           />
+
+          {spread === TOTAL_SPREADS - 1 ? (
+            <div className="final-page-overlay">
+              <FinalPageActions
+                onCreate={() => setDialog("create")}
+                onJoin={() => setDialog("join")}
+              />
+            </div>
+          ) : null}
         </div>
 
         <div className="book-navigation">

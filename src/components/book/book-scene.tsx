@@ -1,6 +1,6 @@
 "use client";
 
-import { Html, RoundedBox } from "@react-three/drei";
+import { RoundedBox } from "@react-three/drei";
 import { Canvas, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
@@ -29,8 +29,6 @@ type BookSceneProps = {
   };
   onPrevious: () => void;
   onNext: () => void;
-  onCreate: () => void;
-  onJoin: () => void;
 };
 
 function seededRandom(seedText: string) {
@@ -535,36 +533,6 @@ function PageLeaf({
   );
 }
 
-function FinalPageActions({
-  onCreate,
-  onJoin,
-}: {
-  onCreate: () => void;
-  onJoin: () => void;
-}) {
-  return (
-    <article
-      className="model-page-actions"
-      onClick={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      <p>The last page</p>
-      <h2>Your next page starts here.</h2>
-      <span>Open a room of your own, or arrive with a code.</span>
-      <div className="model-page-buttons">
-        <button onClick={onCreate} type="button">
-          <span className="button-mark" aria-hidden="true">+</span>
-          Create a new page
-        </button>
-        <button className="secondary" onClick={onJoin} type="button">
-          <span className="button-mark arrow" aria-hidden="true">→</span>
-          Join a page
-        </button>
-      </div>
-    </article>
-  );
-}
-
 function BookModel(props: BookSceneProps & { reducedMotion: boolean }) {
   const book = useRef<THREE.Group>(null);
   const { pointer, viewport } = useThree();
@@ -673,19 +641,6 @@ function BookModel(props: BookSceneProps & { reducedMotion: boolean }) {
         side="left"
       />
       <StaticPage side="right" />
-
-      {props.currentSpread === PAGE_LEAVES.length ? (
-        <Html
-          center
-          distanceFactor={3.2}
-          occlude
-          pointerEvents="auto"
-          position={[PAGE_WIDTH / 2 + 0.08, 0, 0.09]}
-          transform
-        >
-          <FinalPageActions onCreate={props.onCreate} onJoin={props.onJoin} />
-        </Html>
-      ) : null}
 
       {PAGE_LEAVES.map((leaf, index) => (
         <PageLeaf

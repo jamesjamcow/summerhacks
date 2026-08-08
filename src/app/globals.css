@@ -450,16 +450,30 @@ input:focus-visible {
   color: var(--muted);
 }
 
-/* This content is transformed by Drei's Html helper and sits on the final 3D page. */
+.final-page-overlay {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: 78%;
+  height: 89%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  pointer-events: none;
+  transform: translate(-50%, -49%);
+}
+
+/* The buttons remain DOM controls, aligned over the static final right page. */
 .model-page-actions {
   display: flex;
-  width: auto;
-  min-height: 0;
+  width: min(72%, 300px);
+  min-height: 304px;
+  align-self: center;
   flex-direction: column;
-  justify-content: center;
   grid-column: 2;
+  justify-content: center;
+  justify-self: center;
   color: #35231a;
-  padding: 11% 13% 12% 15%;
   pointer-events: auto;
   text-align: left;
   user-select: none;
@@ -475,10 +489,10 @@ input:focus-visible {
 }
 
 .model-page-actions h2 {
-  max-width: 7.2em;
+  max-width: 210px;
   margin: 0;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(22px, 2.2vw, 34px);
+  font-size: 31px;
   font-weight: 560;
   letter-spacing: -0.04em;
   line-height: 0.98;
@@ -486,11 +500,11 @@ input:focus-visible {
 
 .model-page-actions > span {
   display: block;
-  max-width: 18em;
+  max-width: 205px;
   margin-top: 14px;
   color: rgba(53, 35, 26, 0.67);
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(10px, 0.86vw, 13px);
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -1078,29 +1092,46 @@ input:focus-visible {
     margin-top: -4px;
   }
 
-  .book-spread-overlay {
+  .final-page-overlay {
     width: 82%;
     height: min(54vw, 58%);
   }
 
-  .dom-page-copy,
   .model-page-actions {
-    padding-top: 8%;
-    padding-bottom: 8%;
+    width: 72%;
+    min-height: 0;
   }
 
-  .dom-page-copy h2,
+  .model-page-actions > p {
+    margin-bottom: 7px;
+    font-size: 7px;
+  }
+
   .model-page-actions h2 {
-    font-size: clamp(17px, 3.7vw, 27px);
+    font-size: clamp(16px, 3.2vw, 24px);
   }
 
-  .dom-page-copy > span,
-  .dom-page-copy > em {
+  .model-page-actions > span {
     margin-top: 8px;
+    font-size: clamp(8px, 1.5vw, 11px);
   }
 
-  .page-artwork {
-    display: none;
+  .model-page-buttons {
+    gap: 5px;
+    margin-top: 11px;
+  }
+
+  .model-page-buttons button {
+    min-height: 29px;
+    gap: 6px;
+    padding: 0 8px;
+    font-size: 8px;
+  }
+
+  .button-mark {
+    width: 16px;
+    height: 16px;
+    font-size: 10px;
   }
 
   .auth-page {
@@ -1156,64 +1187,40 @@ input:focus-visible {
     font-size: 0.6rem;
   }
 
-  .book-spread-overlay {
+  .final-page-overlay {
     width: 86%;
     height: min(58vw, 42%);
   }
 
-  .dom-page-copy,
-  .model-page-actions {
-    padding: 7% 10%;
-  }
-
-  .dom-page-copy.left {
-    padding-right: 12%;
-  }
-
-  .dom-page-copy.right,
-  .model-page-actions {
-    padding-left: 12%;
-  }
-
-  .dom-page-copy > p,
   .model-page-actions > p {
-    margin-bottom: 5px;
-    font-size: 6px;
+    margin-bottom: 4px;
+    font-size: 5px;
   }
 
-  .dom-page-copy h2,
   .model-page-actions h2 {
-    font-size: clamp(12px, 4vw, 19px);
+    font-size: clamp(11px, 3.8vw, 17px);
   }
 
-  .dom-page-copy > span,
-  .dom-page-copy > em,
   .model-page-actions > span {
-    font-size: clamp(7px, 2vw, 10px);
-    line-height: 1.3;
-  }
-
-  .dom-page-copy > em {
-    display: none;
+    margin-top: 5px;
+    font-size: clamp(6px, 1.8vw, 8px);
   }
 
   .model-page-buttons {
-    gap: 4px;
-    margin-top: 8px;
+    gap: 3px;
+    margin-top: 6px;
   }
 
   .model-page-buttons button {
-    min-height: 25px;
-    gap: 6px;
-    border-radius: 4px;
-    padding: 0 7px;
-    font-size: 7px;
+    min-height: 21px;
+    padding: 0 5px;
+    font-size: 6px;
   }
 
   .button-mark {
-    width: 14px;
-    height: 14px;
-    font-size: 9px;
+    width: 11px;
+    height: 11px;
+    font-size: 7px;
   }
 
   .lobby-dialog {
