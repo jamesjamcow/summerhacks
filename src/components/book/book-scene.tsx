@@ -1,11 +1,16 @@
 "use client";
 
-import { RoundedBox } from "@react-three/drei";
+import { Html, RoundedBox } from "@react-three/drei";
 import { Canvas, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
-import { PAGE_LEAVES } from "./book-content";
+import {
+  PAGE_LEAVES,
+  STATIC_LEFT_PAGE,
+  type PageArtwork,
+  type PageContent,
+} from "./book-content";
 
 const PAGE_WIDTH = 2.72;
 const PAGE_HEIGHT = 3.64;
@@ -24,6 +29,8 @@ type BookSceneProps = {
   };
   onPrevious: () => void;
   onNext: () => void;
+  onCreate: () => void;
+  onJoin: () => void;
 };
 
 function seededRandom(seedText: string) {
@@ -56,7 +63,155 @@ function roundedRect(
   context.closePath();
 }
 
-function makePageTexture(side: "left" | "right") {
+function wrapText(
+  context: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+) {
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let line = "";
+
+  words.forEach((word) => {
+    const candidate = line ? `${line} ${word}` : word;
+    if (line && context.measureText(candidate).width > maxWidth) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = candidate;
+    }
+  });
+
+  if (line) lines.push(line);
+  return lines;
+}
+
+function drawSpacedText(
+  context: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  spacing: number,
+) {
+  let cursor = x;
+  Array.from(text).forEach((character) => {
+    context.fillText(character, cursor, y);
+    cursor += context.measureText(character).width + spacing;
+  });
+}
+
+function drawPageArtwork(
+  context: CanvasRenderingContext2D,
+  artwork: PageArtwork,
+  accent: string,
+  side: "left" | "right",
+) {
+  const x = side === "left" ? 555 : 580;
+  const y = 820;
+  context.save();
+  context.globalAlpha = 0.46;
+  context.strokeStyle = accent;
+  context.fillStyle = accent;
+  context.lineWidth = 3;
+
+  if (artwork === "sun") {
+    context.beginPath();
+    context.arc(x, y, 48, 0, Math.PI * 2);
+    context.stroke();
+    for (let ray = 0; ray < 12; ray += 1) {
+      const angle = (ray / 12) * Math.PI * 2;
+      context.beginPath();
+      context.moveTo(x + Math.cos(angle) * 62, y + Math.sin(angle) * 62);
+      context.lineTo(x + Math.cos(angle) * 78, y + Math.sin(angle) * 78);
+      context.stroke();
+    }
+  } else if (artwork === "orbit") {
+    context.beginPath();
+    context.ellipse(x, y, 72, 35, -0.35, 0, Math.PI * 2);
+    context.stroke();
+    context.beginPath();
+    context.arc(x + 57, y - 34, 8, 0, Math.PI * 2);
+    context.fill();
+  } else if (artwork === "waves") {
+    for (let wave = 0; wave < 3; wave += 1) {
+      context.beginPath();
+      context.moveTo(x - 82, y - 24 + wave * 25);
+      context.bezierCurveTo(
+        x - 38,
+        y - 48 + wave * 25,
+        x + 38,
+        y + wave * 25,
+        x + 82,
+        y - 24 + wave * 25,
+      );
+      context.stroke();
+    }
+  } else if (artwork === "constellation") {
+    const points = [[-58, 32], [-28, -35], [18, 10], [62, -46], [76, 38]];
+    context.beginPath();
+    points.forEach(([dx, dy], index) => {
+      if (index === 0) context.moveTo(x + dx, y + dy);
+      else context.lineTo(x + dx, y + dy);
+    });
+    context.stroke();
+    points.forEach(([dx, dy]) => {
+      context.beginPath();
+      context.arc(x + dx, y + dy, 6, 0, Math.PI * 2);
+      context.fill();
+    });
+  } else if (artwork === "door") {
+    roundedRect(context, x - 52, y - 72, 104, 144, 52);
+    context.stroke();
+    context.beginPath();
+    context.arc(x + 27, y + 8, 5, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  context.restore();
+}
+
+function drawPageContent(
+  context: CanvasRenderingContext2D,
+  content: PageContent,
+  side: "left" | "right",
+) {
+  const x = side === "left" ? 86 : 112;
+  const maxWidth = side === "left" ? 528 : 520;
+
+  context.save();
+  context.textBaseline = "alphabetic";
+  context.fillStyle = content.accent;
+  context.font = "700 16px Arial, Helvetica, sans-serif";
+  drawSpacedText(context, content.eyebrow.toUpperCase(), x, 247, 2.2);
+
+  context.fillStyle = "#35231a";
+  context.font = '600 58px Georgia, "Times New Roman", serif';
+  const titleLines = wrapText(context, content.title, maxWidth);
+  const titleLineHeight = 59;
+  titleLines.forEach((line, index) => {
+    context.fillText(line, x, 320 + index * titleLineHeight);
+  });
+
+  let cursorY = 320 + titleLines.length * titleLineHeight + 22;
+  context.fillStyle = "rgba(53, 35, 26, 0.74)";
+  context.font = '25px Georgia, "Times New Roman", serif';
+  const bodyLines = wrapText(context, content.body, maxWidth);
+  bodyLines.forEach((line, index) => {
+    context.fillText(line, x, cursorY + index * 37);
+  });
+  cursorY += bodyLines.length * 37 + 24;
+
+  if (content.note) {
+    context.fillStyle = "rgba(53, 35, 26, 0.62)";
+    context.font = 'italic 21px Georgia, "Times New Roman", serif';
+    context.fillText(content.note, x, cursorY);
+  }
+
+  drawPageArtwork(context, content.artwork, content.accent, side);
+  context.restore();
+}
+
+function makePageTexture(side: "left" | "right", content?: PageContent) {
   const canvas = document.createElement("canvas");
   canvas.width = 768;
   canvas.height = 1024;
@@ -70,7 +225,7 @@ function makePageTexture(side: "left" | "right") {
   context.fillStyle = paper;
   context.fillRect(0, 0, 768, 1024);
 
-  const random = seededRandom(`summerhacks-blank-${side}`);
+  const random = seededRandom(`summerhacks-${side}-${content?.title ?? "blank"}`);
   for (let index = 0; index < 2600; index += 1) {
     const value = Math.floor(random() * 90 + 70);
     context.fillStyle = `rgba(${value}, ${value - 14}, ${value - 32}, ${0.018 + random() * 0.026})`;
@@ -93,6 +248,8 @@ function makePageTexture(side: "left" | "right") {
   context.lineWidth = 2;
   roundedRect(context, 34, 34, 700, 956, 10);
   context.stroke();
+
+  if (content) drawPageContent(context, content, side);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -135,16 +292,20 @@ function makeLeatherTexture() {
   return texture;
 }
 
-function usePageTexture(side: "left" | "right", mirror = false) {
+function usePageTexture(
+  side: "left" | "right",
+  content?: PageContent,
+  mirror = false,
+) {
   const texture = useMemo(() => {
-    const nextTexture = makePageTexture(side);
+    const nextTexture = makePageTexture(side, content);
     if (mirror) {
       nextTexture.wrapS = THREE.RepeatWrapping;
       nextTexture.repeat.x = -1;
       nextTexture.offset.x = 1;
     }
     return nextTexture;
-  }, [mirror, side]);
+  }, [content, mirror, side]);
 
   useEffect(() => () => texture.dispose(), [texture]);
   return texture;
@@ -166,12 +327,14 @@ function useReducedMotion() {
 
 function StaticPage({
   side,
+  content,
   onClick,
 }: {
   side: "left" | "right";
+  content?: PageContent;
   onClick?: () => void;
 }) {
-  const texture = usePageTexture(side);
+  const texture = usePageTexture(side, content);
   const [hovered, setHovered] = useState(false);
 
   useEffect(() => {
@@ -221,8 +384,8 @@ function PageLeaf({
 }) {
   const group = useRef<THREE.Group>(null);
   const frontMesh = useRef<THREE.Mesh<THREE.PlaneGeometry>>(null);
-  const frontTexture = usePageTexture("right");
-  const backTexture = usePageTexture("left", true);
+  const frontTexture = usePageTexture("right", PAGE_LEAVES[index].front);
+  const backTexture = usePageTexture("left", PAGE_LEAVES[index].back, true);
   const turned = index < currentSpread;
   const isForwardPage = index === currentSpread;
   const isBackPage = index === currentSpread - 1;
@@ -372,6 +535,36 @@ function PageLeaf({
   );
 }
 
+function FinalPageActions({
+  onCreate,
+  onJoin,
+}: {
+  onCreate: () => void;
+  onJoin: () => void;
+}) {
+  return (
+    <article
+      className="model-page-actions"
+      onClick={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <p>The last page</p>
+      <h2>Your next page starts here.</h2>
+      <span>Open a room of your own, or arrive with a code.</span>
+      <div className="model-page-buttons">
+        <button onClick={onCreate} type="button">
+          <span className="button-mark" aria-hidden="true">+</span>
+          Create a new page
+        </button>
+        <button className="secondary" onClick={onJoin} type="button">
+          <span className="button-mark arrow" aria-hidden="true">→</span>
+          Join a page
+        </button>
+      </div>
+    </article>
+  );
+}
+
 function BookModel(props: BookSceneProps & { reducedMotion: boolean }) {
   const book = useRef<THREE.Group>(null);
   const { pointer, viewport } = useThree();
@@ -475,10 +668,24 @@ function BookModel(props: BookSceneProps & { reducedMotion: boolean }) {
       </mesh>
 
       <StaticPage
+        content={STATIC_LEFT_PAGE}
         onClick={props.currentSpread > 0 ? props.onPrevious : undefined}
         side="left"
       />
       <StaticPage side="right" />
+
+      {props.currentSpread === PAGE_LEAVES.length ? (
+        <Html
+          center
+          distanceFactor={3.2}
+          occlude
+          pointerEvents="auto"
+          position={[PAGE_WIDTH / 2 + 0.08, 0, 0.09]}
+          transform
+        >
+          <FinalPageActions onCreate={props.onCreate} onJoin={props.onJoin} />
+        </Html>
+      ) : null}
 
       {PAGE_LEAVES.map((leaf, index) => (
         <PageLeaf

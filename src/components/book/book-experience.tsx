@@ -11,14 +11,7 @@ import {
   useState,
 } from "react";
 
-import {
-  BOOK_SPREADS,
-  FINAL_PAGE,
-  PAGE_LEAVES,
-  STATIC_LEFT_PAGE,
-  TOTAL_SPREADS,
-  type PageContent,
-} from "./book-content";
+import { BOOK_SPREADS, TOTAL_SPREADS } from "./book-content";
 
 const BookScene = dynamic(() => import("./book-scene"), {
   ssr: false,
@@ -35,95 +28,6 @@ type DragDirection = "next" | "previous";
 type DragPreview = { direction: DragDirection; progress: number };
 
 const DRAG_AXIS_SLOP = 8;
-
-function spreadPages(spread: number): { left: PageContent; right: PageContent } {
-  if (spread === 0) {
-    return { left: STATIC_LEFT_PAGE, right: PAGE_LEAVES[0].front };
-  }
-
-  if (spread === TOTAL_SPREADS - 1) {
-    return {
-      left: PAGE_LEAVES[PAGE_LEAVES.length - 1].back,
-      right: FINAL_PAGE,
-    };
-  }
-
-  return {
-    left: PAGE_LEAVES[spread - 1].back,
-    right: PAGE_LEAVES[spread].front,
-  };
-}
-
-function PageCopy({ content, side }: { content: PageContent; side: "left" | "right" }) {
-  return (
-    <article className={`dom-page-copy ${side}`} data-artwork={content.artwork}>
-      <p>{content.eyebrow}</p>
-      <h2>{content.title}</h2>
-      <span>{content.body}</span>
-      {content.note ? <em>{content.note}</em> : null}
-      <i className="page-artwork" aria-hidden="true" />
-    </article>
-  );
-}
-
-function FinalPageActions({
-  onCreate,
-  onJoin,
-}: {
-  onCreate: () => void;
-  onJoin: () => void;
-}) {
-  return (
-    <article
-      className="model-page-actions"
-      onClick={(event) => event.stopPropagation()}
-      onPointerDown={(event) => event.stopPropagation()}
-    >
-      <p>The last page</p>
-      <h2>Your next page starts here.</h2>
-      <span>Open a room of your own, or arrive with a code.</span>
-      <div className="model-page-buttons">
-        <button onClick={onCreate} type="button">
-          <span className="button-mark" aria-hidden="true">+</span>
-          Create a new page
-        </button>
-        <button className="secondary" onClick={onJoin} type="button">
-          <span className="button-mark arrow" aria-hidden="true">→</span>
-          Join a page
-        </button>
-      </div>
-    </article>
-  );
-}
-
-function BookSpreadOverlay({
-  spread,
-  visible,
-  onCreate,
-  onJoin,
-}: {
-  spread: number;
-  visible: boolean;
-  onCreate: () => void;
-  onJoin: () => void;
-}) {
-  const pages = spreadPages(spread);
-  const isFinalSpread = spread === TOTAL_SPREADS - 1;
-
-  return (
-    <div
-      aria-hidden={!visible}
-      className={visible ? "book-spread-overlay is-visible" : "book-spread-overlay"}
-    >
-      <PageCopy content={pages.left} side="left" />
-      {isFinalSpread ? (
-        <FinalPageActions onCreate={onCreate} onJoin={onJoin} />
-      ) : (
-        <PageCopy content={pages.right} side="right" />
-      )}
-    </div>
-  );
-}
 
 function generateLobbyCode() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -250,8 +154,6 @@ function LobbyDialog({
 
 export function BookExperience() {
   const [spread, setSpread] = useState(0);
-  const [displaySpread, setDisplaySpread] = useState(0);
-  const [contentVisible, setContentVisible] = useState(true);
   const [dialog, setDialog] = useState<LobbyMode>();
   const [toast, setToast] = useState<string>();
   const [dragPreview, setDragPreview] = useState<DragPreview>();
@@ -385,21 +287,6 @@ export function BookExperience() {
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
-  useEffect(() => {
-    if (spread === displaySpread) return;
-
-    const hide = window.setTimeout(() => setContentVisible(false), 0);
-    const swap = window.setTimeout(() => {
-      setDisplaySpread(spread);
-      setContentVisible(true);
-    }, 540);
-
-    return () => {
-      window.clearTimeout(hide);
-      window.clearTimeout(swap);
-    };
-  }, [displaySpread, spread]);
-
   const activeSpread = BOOK_SPREADS[spread];
   const progressLabel = useMemo(
     () => `Spread ${spread + 1} of ${TOTAL_SPREADS}: ${activeSpread.title}`,
@@ -429,17 +316,11 @@ export function BookExperience() {
           <BookScene
             currentSpread={spread}
             dragPreview={dragPreview}
+            onCreate={() => setDialog("create")}
+            onJoin={() => setDialog("join")}
             onNext={next}
             onPrevious={previous}
           />
-
-          <BookSpreadOverlay
-            onCreate={() => setDialog("create")}
-            onJoin={() => setDialog("join")}
-            spread={displaySpread}
-            visible={contentVisible && !dragPreview}
-          />
-
         </div>
 
         <div className="book-navigation">
