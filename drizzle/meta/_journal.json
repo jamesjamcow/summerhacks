@@ -8,6 +8,13 @@
       "when": 1786214840370,
       "tag": "0000_clammy_machine_man",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786221082536,
+      "tag": "0001_lovely_chat",
+      "breakpoints": true
     }
   ]
 }

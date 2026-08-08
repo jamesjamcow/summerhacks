@@ -1,6 +1,9 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 
 import { BookExperience } from "@/components/book/book-experience";
+import { getDb } from "@/db";
+import { uploads } from "@/db/schema";
 
 export default async function HomePage() {
   await auth.protect();
@@ -20,5 +23,42 @@ export default async function HomePage() {
     .slice(0, 2)
     .toUpperCase();
 
-  return <BookExperience viewer={{ id: user.id, initials, name }} />;
+  const completedUploads = await getDb()
+    .select({
+      id: uploads.id,
+      keyObject: uploads.keyObject,
+      generatedFileUrl: uploads.generatedFileUrl,
+      fileName: uploads.fileName,
+    })
+    .from(uploads)
+    .where(
+      and(
+        eq(uploads.clerkUserId, user.id),
+        eq(uploads.processingStatus, "complete"),
+        isNotNull(uploads.generatedFileUrl),
+      ),
+    )
+    .orderBy(desc(uploads.createdAt))
+    .limit(50);
+
+  const initialArtifacts = completedUploads.flatMap((upload) =>
+    upload.generatedFileUrl && upload.keyObject
+      ? [
+          {
+            id: upload.id,
+            name: upload.keyObject,
+            artifactImageUrl: upload.generatedFileUrl,
+            originalMemory: upload.fileName,
+            addedBy: "You",
+          },
+        ]
+      : [],
+  );
+
+  return (
+    <BookExperience
+      initialArtifacts={initialArtifacts}
+      viewer={{ id: user.id, initials, name }}
+    />
+  );
 }

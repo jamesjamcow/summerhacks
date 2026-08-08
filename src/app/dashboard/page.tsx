@@ -93,7 +93,8 @@ export default async function DashboardPage() {
         <section className="dashboard-panel">
           <h2>Files</h2>
           <p className="dashboard-panel-copy">
-            Upload one image, PDF, or text file at a time.
+            Upload up to five images, voice notes, PDFs, or text files. Each one
+            becomes one illustrated keepsake.
           </p>
           <div className="dashboard-uploader">
             <UploadPanel />
@@ -102,20 +103,37 @@ export default async function DashboardPage() {
           <div className="dashboard-list">
             {userUploads.length ? (
               userUploads.map((file) => (
-                <a
-                  className="dashboard-file"
-                  href={file.fileUrl}
-                  key={file.id}
-                  rel="noreferrer"
-                  target="_blank"
-                >
-                  <span className="dashboard-file-name">
-                    {file.fileName}
-                  </span>
-                  <span className="dashboard-file-size">
-                    {(file.fileSize / 1024).toFixed(1)} KB
-                  </span>
-                </a>
+                <article className="dashboard-file" key={file.id}>
+                  <a href={file.fileUrl} rel="noreferrer" target="_blank">
+                    <span className="dashboard-file-name">{file.fileName}</span>
+                    <span className="dashboard-file-size">
+                      {(file.fileSize / 1024).toFixed(1)} KB
+                    </span>
+                  </a>
+                  {file.generatedFileUrl && file.keyObject ? (
+                    <a
+                      className="dashboard-artifact"
+                      href={file.generatedFileUrl}
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      <span
+                        aria-label={`Generated ${file.keyObject} illustration`}
+                        role="img"
+                        style={{ backgroundImage: `url(${file.generatedFileUrl})` }}
+                      />
+                      <strong>{file.keyObject}</strong>
+                    </a>
+                  ) : (
+                    <span className={`dashboard-generation-status is-${file.processingStatus}`}>
+                      {file.processingStatus === "failed"
+                        ? "Illustration failed"
+                        : file.processingStatus === "processing"
+                          ? "Illustrating…"
+                          : "Not illustrated"}
+                    </span>
+                  )}
+                </article>
               ))
             ) : (
               <p className="dashboard-empty">

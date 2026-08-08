@@ -23,6 +23,14 @@ export const uploads = pgTable(
     fileUrl: text("file_url").notNull(),
     fileType: text("file_type").notNull(),
     fileSize: integer("file_size").notNull(),
+    processingStatus: text("processing_status").default("processing").notNull(),
+    keyObject: text("key_object"),
+    generatedFileKey: text("generated_file_key").unique(),
+    generatedFileUrl: text("generated_file_url"),
+    generatedFileType: text("generated_file_type"),
+    generatedFileSize: integer("generated_file_size"),
+    generationError: text("generation_error"),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

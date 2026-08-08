@@ -13,8 +13,10 @@ deliberately small but exercises the full stack:
 
 1. Clerk authenticates the visitor and provides a stable `userId`.
 2. A Server Action writes the user's notes to Neon Postgres.
-3. UploadThing stores uploaded files.
-4. UploadThing's completion callback writes file metadata to Neon.
+3. UploadThing stores uploaded memory files.
+4. UploadThing's completion callback sends each file to Gemini, extracts one
+   key object, asks Gemini for one black folk-art illustration, uploads that
+   generated image to UploadThing, and writes the linked metadata to Neon.
 5. Dashboard queries include the Clerk user ID, so users only read their own
    notes and upload records.
 
@@ -32,6 +34,7 @@ application records and UploadThing metadata.
 | Database | Neon Postgres | Durable application data |
 | Data access | Drizzle ORM + Neon HTTP driver | Typed schema, queries, and SQL migrations |
 | File storage | UploadThing | Upload authorization, transfer, storage, and CDN URLs |
+| Memory processing | Gemini API | One key-object extraction and one image generation per uploaded memory |
 
 Exact installed versions live in `package.json` and `package-lock.json`. Do not
 duplicate version numbers elsewhere unless a compatibility note requires it.
@@ -93,9 +96,16 @@ be committed.
 | `NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL` | Browser-safe | Post-sign-in destination |
 | `NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL` | Browser-safe | Post-sign-up destination |
 | `UPLOADTHING_TOKEN` | Server only | Authorizes UploadThing's server SDK |
+| `GEMINI_API_KEY` | Server only | Analyzes each memory and generates its keepsake image |
+| `GEMINI_EXTRACTION_MODEL` | Server only, optional | Overrides the default Gemini key-object extraction model |
+| `GEMINI_IMAGE_MODEL` | Server only, optional | Overrides the default Gemini image-generation model |
 
 Only variables beginning with `NEXT_PUBLIC_` may be referenced by client code.
 Do not rename a secret with that prefix.
+
+Gemini image-generation models do not have free-tier Developer API quota. The
+Google Cloud project behind `GEMINI_API_KEY` must have billing enabled, even if
+the same model can be tried interactively in Google AI Studio.
 
 ## First-time setup
 
@@ -104,21 +114,24 @@ Do not rename a secret with that prefix.
 3. Create a Clerk application and copy its publishable and secret keys.
 4. In Clerk, allow the sign-in methods desired for this app.
 5. Create an UploadThing app and copy its token.
-6. Run `cp .env.example .env.local` and replace every placeholder.
-7. Run `npm run db:migrate` to apply the committed migration to Neon.
-8. Run `npm run dev` and open `http://localhost:3000`.
-9. Sign up, add a note, and upload a small file to exercise all services.
+6. Create a Gemini API key in Google AI Studio.
+7. Run `cp .env.example .env.local` and replace every placeholder.
+8. Run `npm run db:migrate` to apply the committed migrations to Neon.
+9. Run `npm run dev` and open `http://localhost:3000`.
+10. Sign up, add a note, and upload a small file to exercise all services.
 
-No real cloud resources or credentials are created by this repository. Those
-three provider accounts must be configured before the integrated dashboard can
+No real cloud resources or credentials are created by this repository. Clerk,
+Neon, UploadThing, and Gemini must be configured before the integrated flow can
 run end to end.
 
 ## Database model
 
 `notes` contains `id`, `clerk_user_id`, `content`, and `created_at`.
 
-`uploads` contains `id`, `clerk_user_id`, UploadThing's unique `file_key`, file
-name, CDN URL, MIME type, byte size, and `created_at`.
+`uploads` contains the authenticated owner's source-file metadata plus processing
+status, the extracted key object, generated-file metadata, failure detail, and
+processing timestamps. A single row is the durable one-to-one link between one
+source memory and its one generated artifact.
 
 Both tables index `clerk_user_id`. The value deliberately references Clerk by
 identifier rather than a Postgres foreign key because there is no local users
@@ -166,20 +179,32 @@ file types and limits, not private user records.
 ## Upload flow
 
 The browser renders a typed `UploadDropzone` from `src/lib/uploadthing.ts`.
-The `workspaceFile` route allows one file per request:
+The `workspaceFile` route accepts batches of up to five total files across these
+supported categories:
 
-- image up to 4 MB
+- image up to 8 MB
+- audio/voice note up to 8 MB
 - PDF up to 8 MB
 - text file up to 1 MB
 
-After UploadThing finishes storage, `onUploadComplete` inserts the file key,
-URL, metadata, and authenticated owner ID into Neon. The client then refreshes
-the dashboard so the new metadata row appears.
+UploadThing calls `onUploadComplete` separately for each file. The callback
+persists the source metadata, reads the source bytes, and asks Gemini for one
+lowercase concrete key object. It then makes one independent Gemini image call
+using the project's black-marker folk-art prompt, deliberately keeps only the
+first returned image, uploads that image through UploadThing's server SDK, and
+updates the same Neon row. Five source files therefore produce five independent
+generated-file records and never one collage.
 
-Current limitation: UploadThing storage can succeed while the Neon metadata
-insert fails, leaving an unlisted file in UploadThing. Production code may add
-an idempotent retry, webhook reconciliation, or cleanup job. A file deletion
-feature must delete both the UploadThing object and its owner-scoped Neon row.
+The client waits for the callback's server data, renders completed artifacts in
+the upload panel immediately, and adds them to the signed-in user's memory chest.
+The root Server Component reloads completed owner-scoped artifacts from Neon, so
+they remain visible after refresh.
+
+Current limitation: a source upload can succeed while Gemini or the generated
+UploadThing upload fails. That source row is retained with `processing_status =
+failed` and an internal error string so the failure is visible and retryable.
+Production code may add a retry/reconciliation job. A future deletion feature
+must delete both UploadThing objects and the owner-scoped Neon row.
 
 ## Scrapbook experience
 
