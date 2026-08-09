@@ -7,9 +7,10 @@ import {
 } from "@/lib/character-avatar";
 import {
   MEMORY_MODEL_MIME_TYPE,
+  isMemoryItemType,
   parseMemoryModelSpec,
   resolveMemoryItemType,
-  type MemoryModelSpec,
+  type ClassifiedMemoryModelSpec,
 } from "@/lib/memory-model";
 
 const EXTRACTION_MODEL =
@@ -91,7 +92,7 @@ export type GeneratedMemoryModel = {
   bytes: Uint8Array;
   keyObject: string;
   mimeType: string;
-  spec: MemoryModelSpec;
+  spec: ClassifiedMemoryModelSpec;
 };
 
 function getApiKey() {
@@ -274,11 +275,21 @@ export async function createMemoryModelArtifact(input: {
   const keyObject = normalizeKeyObject(candidate.name);
 
   if (!keyObject) throw new Error("Gemini returned an invalid memory object name.");
-  const spec = parseMemoryModelSpec({
+  if (!isMemoryItemType(candidate.itemType)) {
+    throw new Error("Gemini returned an invalid gameplay item type.");
+  }
+  const parsedSpec = parseMemoryModelSpec({
     ...candidate,
     name: keyObject,
     itemType: resolveMemoryItemType(keyObject, candidate.itemType),
   }, { requireItemType: true });
+  if (!parsedSpec.itemType) {
+    throw new Error("Gemini returned a memory without a gameplay item type.");
+  }
+  const spec: ClassifiedMemoryModelSpec = {
+    ...parsedSpec,
+    itemType: parsedSpec.itemType,
+  };
   const serialized = JSON.stringify(spec);
 
   return {

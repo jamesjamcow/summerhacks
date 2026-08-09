@@ -218,6 +218,60 @@ export type ArenaRealtimeSnapshot = {
   projectiles: Record<string, ArenaProjectileSnapshot>;
 };
 
+// Colyseus keeps the same nested Schema instance until the server replaces the
+// generated map. Reusing its immutable client snapshot avoids rebuilding every
+// block, decoration, and landmark for each 20 Hz player-position patch.
+const arenaMapSnapshotCache = new WeakMap<object, ArenaMapSpec>();
+
+function snapshotArenaMap(map: ArenaMapState): ArenaMapSpec {
+  const cached = arenaMapSnapshotCache.get(map);
+  if (cached) return cached;
+
+  const snapshot: ArenaMapSpec = {
+    accentColor: map.accentColor,
+    allPhotosOutdoor: map.allPhotosOutdoor,
+    biome: map.biome as ArenaMapSpec["biome"],
+    blocks: Array.from(map.blocks).map((block) => ({
+      color: block.color,
+      depth: block.depth,
+      height: block.height,
+      style: block.style as ArenaMapSpec["blocks"][number]["style"],
+      width: block.width,
+      x: block.x,
+      y: block.y,
+      z: block.z,
+    })),
+    decorations: Array.from(map.decorations).map((decoration) => ({
+      ...(decoration.color ? { color: decoration.color } : {}),
+      kind: decoration.kind as ArenaMapSpec["decorations"][number]["kind"],
+      rotation: decoration.rotation,
+      scale: decoration.scale,
+      x: decoration.x,
+      z: decoration.z,
+    })),
+    fogColor: map.fogColor,
+    groundColor: map.groundColor,
+    landmarks: Array.from(map.landmarks).map((landmark) => ({
+      id: landmark.id,
+      ...(landmark.imageUrl ? { imageUrl: landmark.imageUrl } : {}),
+      ...(landmark.modelUrl ? { modelUrl: landmark.modelUrl } : {}),
+      name: landmark.name,
+      rotation: landmark.rotation,
+      scale: landmark.scale,
+      x: landmark.x,
+      z: landmark.z,
+    })),
+    pathColor: map.pathColor,
+    photoCount: map.photoCount,
+    skyColor: map.skyColor,
+    source: map.source as ArenaMapSpec["source"],
+    themeName: map.themeName,
+    version: 1,
+  };
+  arenaMapSnapshotCache.set(map, snapshot);
+  return snapshot;
+}
+
 export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
   const itemSnapshot = (item: ArenaItemState): ArenaPlayerSnapshot["item"] => ({
     id: item.id,
@@ -228,48 +282,6 @@ export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
     modelUrl: item.modelUrl,
     originalImageUrl: item.originalImageUrl,
   });
-
-  const mapSnapshot: ArenaMapSpec = {
-    accentColor: state.map.accentColor,
-    allPhotosOutdoor: state.map.allPhotosOutdoor,
-    biome: state.map.biome as ArenaMapSpec["biome"],
-    blocks: Array.from(state.map.blocks).map((block) => ({
-      color: block.color,
-      depth: block.depth,
-      height: block.height,
-      style: block.style as ArenaMapSpec["blocks"][number]["style"],
-      width: block.width,
-      x: block.x,
-      y: block.y,
-      z: block.z,
-    })),
-    decorations: Array.from(state.map.decorations).map((decoration) => ({
-      ...(decoration.color ? { color: decoration.color } : {}),
-      kind: decoration.kind as ArenaMapSpec["decorations"][number]["kind"],
-      rotation: decoration.rotation,
-      scale: decoration.scale,
-      x: decoration.x,
-      z: decoration.z,
-    })),
-    fogColor: state.map.fogColor,
-    groundColor: state.map.groundColor,
-    landmarks: Array.from(state.map.landmarks).map((landmark) => ({
-      id: landmark.id,
-      ...(landmark.imageUrl ? { imageUrl: landmark.imageUrl } : {}),
-      ...(landmark.modelUrl ? { modelUrl: landmark.modelUrl } : {}),
-      name: landmark.name,
-      rotation: landmark.rotation,
-      scale: landmark.scale,
-      x: landmark.x,
-      z: landmark.z,
-    })),
-    pathColor: state.map.pathColor,
-    photoCount: state.map.photoCount,
-    skyColor: state.map.skyColor,
-    source: state.map.source as ArenaMapSpec["source"],
-    themeName: state.map.themeName,
-    version: 1,
-  };
 
   return {
     roomCode: state.roomCode,
@@ -282,7 +294,7 @@ export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
     resultReason: state.resultReason as ArenaRealtimeSnapshot["resultReason"],
     resultReceipt: state.resultReceipt,
     impactItem: itemSnapshot(state.impactItem),
-    map: mapSnapshot,
+    map: snapshotArenaMap(state.map),
     players: Object.fromEntries(Array.from(state.players.entries()).map(([id, player]) => [
       id,
       {

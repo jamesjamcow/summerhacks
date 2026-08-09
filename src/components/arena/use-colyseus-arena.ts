@@ -23,6 +23,8 @@ export type ArenaInputMessage = {
   jump: boolean;
 };
 
+export type ArenaItemAction = "shoot" | "consume";
+
 export function useColyseusArena(roomCode: string, enabled: boolean) {
   const [snapshot, setSnapshot] = useState<ArenaRealtimeSnapshot>();
   const [status, setStatus] = useState<"idle" | "connecting" | "connected" | "reconnecting" | "closed">("idle");
@@ -55,6 +57,16 @@ export function useColyseusArena(roomCode: string, enabled: boolean) {
         await room.leave(true);
         return;
       }
+
+      // The default SDK refuses to reconnect when a connection drops during
+      // its first five seconds, which overlaps our map generation/countdown.
+      // Tailnet and Wi-Fi handoffs should retry immediately instead of turning
+      // a brief Chrome interruption into a 0-0 forfeit.
+      room.reconnection.minUptime = 0;
+      room.reconnection.maxRetries = 30;
+      room.reconnection.minDelay = 100;
+      room.reconnection.maxDelay = 2_000;
+      room.reconnection.maxEnqueuedMessages = 20;
 
       joinedRoom = room;
       roomRef.current = room;
@@ -103,8 +115,8 @@ export function useColyseusArena(roomCode: string, enabled: boolean) {
     roomRef.current?.send("input", input);
   }, []);
 
-  const useItem = useCallback(() => {
-    roomRef.current?.send("use-item");
+  const useItem = useCallback((action: ArenaItemAction) => {
+    roomRef.current?.send("use-item", { action });
   }, []);
 
   return { error, sendInput, snapshot, status, useItem };

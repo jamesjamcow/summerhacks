@@ -1028,7 +1028,7 @@ export default function BookScene(props: BookSceneProps) {
           gl.toneMapping = THREE.ACESFilmicToneMapping;
           gl.toneMappingExposure = 1.08;
         }}
-        shadows
+        shadows="basic"
       >
         <Scene {...props} />
       </Canvas>

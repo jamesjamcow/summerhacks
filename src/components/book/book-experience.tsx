@@ -581,10 +581,26 @@ function Scrapbook({
   }, [selectedMemberId, overlay]);
 
   useEffect(() => {
+    if (overlay) return;
     let cancelled = false;
+    let inFlight = false;
+    let timer: number | undefined;
+    let requestController: AbortController | undefined;
+
+    const scheduleNextSync = () => {
+      if (cancelled || document.hidden) return;
+      timer = window.setTimeout(() => { void syncMembers(); }, 3_000);
+    };
+
     const syncMembers = async () => {
+      if (cancelled || inFlight || document.hidden) return;
+      inFlight = true;
+      requestController = new AbortController();
       try {
-        const response = await fetch(`/api/scrapbooks/${encodeURIComponent(session.code)}`, { cache: "no-store" });
+        const response = await fetch(`/api/scrapbooks/${encodeURIComponent(session.code)}`, {
+          cache: "no-store",
+          signal: requestController.signal,
+        });
         const result = await response.json() as {
           artifacts?: MemoryArtifact[];
           members?: Array<{
@@ -618,15 +634,28 @@ function Scrapbook({
         }
       } catch {
         // Keep the last known member list while the room connection recovers.
+      } finally {
+        inFlight = false;
+        requestController = undefined;
+        scheduleNextSync();
       }
     };
+
+    const handleVisibilityChange = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = undefined;
+      if (!document.hidden) void syncMembers();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     void syncMembers();
-    const timer = window.setInterval(() => { void syncMembers(); }, 3_000);
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      requestController?.abort();
+      if (timer !== undefined) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [session.code, viewer.avatarImageUrl, viewer.avatarModelUrl, viewer.id]);
+  }, [overlay, session.code, viewer.avatarImageUrl, viewer.avatarModelUrl, viewer.id]);
 
   return (
     <section className="scrapbook-stage" aria-label={`${session.name} scrapbook`}>

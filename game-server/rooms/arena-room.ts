@@ -44,6 +44,8 @@ type ArenaInput = {
   jump: boolean;
 };
 
+type ArenaItemAction = "shoot" | "consume";
+
 type ArenaRoomClient = Client<{
   auth: ArenaTicketPayload;
   userData: { userId: string };
@@ -133,7 +135,7 @@ export class ArenaRoom extends Room<{
 }> {
   maxClients = 2;
   patchRate = 50;
-  maxMessagesPerSecond = 35;
+  maxMessagesPerSecond = 60;
 
   state = new ArenaState({
     eliminatedPlayerId: "",
@@ -155,6 +157,7 @@ export class ArenaRoom extends Room<{
   private readonly lastShotAt = new Map<string, number>();
   private readonly motionByUser = new Map<string, PlayerMotionRuntime>();
   private readonly projectileRuntime = new Map<string, ProjectileRuntime>();
+  private mapGeneration = 0;
   private world: ArenaMapSpec = FALLBACK_ARENA_MAP;
 
   static async onAuth(token: string, options: unknown) {
@@ -182,7 +185,7 @@ export class ArenaRoom extends Room<{
     this.metadata = { roomCode };
     this.setSimulationInterval((deltaTime) => this.updateWorld(deltaTime), 1000 / 30);
     this.onMessage("input", (client, message: unknown) => this.receiveInput(client, message));
-    this.onMessage("use-item", (client) => this.useItem(client));
+    this.onMessage("use-item", (client, message: unknown) => this.useItem(client, message));
   }
 
   onJoin(client: ArenaRoomClient, _options: unknown, auth: ArenaTicketPayload) {
@@ -190,6 +193,11 @@ export class ArenaRoom extends Room<{
     if (!ticket || ticket.roomCode !== this.state.roomCode) {
       throw new ServerError(403, "This arena ticket belongs to another scrapbook.");
     }
+
+    // A finished room may still contain the disconnected participant so the
+    // winner can read the final state. Clear that stale slot before matching a
+    // replacement player into the next game.
+    if (this.state.phase === "match-end") this.resetToWaiting();
 
     const existing = this.state.players.get(ticket.userId);
     if (existing?.connected) {
@@ -239,10 +247,18 @@ export class ArenaRoom extends Room<{
   async onDrop(client: ArenaRoomClient) {
     const userId = client.userData?.userId;
     const player = userId ? this.state.players.get(userId) : undefined;
-    if (player) player.connected = false;
+    if (player) {
+      player.connected = false;
+      const input = this.inputByUser.get(player.userId) || EMPTY_INPUT;
+      this.inputByUser.set(player.userId, {
+        ...EMPTY_INPUT,
+        pitch: input.pitch,
+        yaw: input.yaw,
+      });
+    }
 
     try {
-      await this.allowReconnection(client, 10);
+      await this.allowReconnection(client, 30);
     } catch {
       if (userId) this.removePlayer(userId);
     }
@@ -280,15 +296,20 @@ export class ArenaRoom extends Room<{
     });
   }
 
-  private useItem(client: ArenaRoomClient) {
+  private useItem(client: ArenaRoomClient, message: unknown) {
     if (this.state.phase !== "playing") return;
+    if (!message || typeof message !== "object") return;
+    const action = (message as Record<string, unknown>).action as ArenaItemAction | undefined;
+    if (action !== "shoot" && action !== "consume") return;
+
     const userId = client.userData?.userId || "";
     const player = this.state.players.get(userId);
     if (!player || !player.connected || player.health <= 0) return;
 
     const now = Date.now();
     if (player.consumingEndsAt > now) return;
-    if (player.item.itemType === "power-up") {
+    if (action === "consume") {
+      if (player.item.itemType !== "power-up") return;
       if (player.powerUpCooldownEndsAt > now) return;
       player.consumingEndsAt = now + POWER_UP_CONSUME_MS;
       return;
@@ -514,6 +535,11 @@ export class ArenaRoom extends Room<{
   }
 
   private async prepareMatch() {
+    const generation = ++this.mapGeneration;
+    const participantIds = JSON.stringify(Array.from(this.state.players.values())
+      .filter((player) => player.connected)
+      .map((player) => player.userId)
+      .sort());
     const inventories = Array.from(this.inventoryByUser.values());
     const photoCount = new Set(inventories.flat().flatMap((item) =>
       item.originalImageUrl ? [item.id] : []
@@ -532,9 +558,14 @@ export class ArenaRoom extends Room<{
     } catch (error) {
       console.error("Gemini arena map generation failed; using the balanced fallback map", error);
     }
+    const currentParticipantIds = JSON.stringify(Array.from(this.state.players.values())
+      .filter((player) => player.connected)
+      .map((player) => player.userId)
+      .sort());
     if (
+      generation !== this.mapGeneration ||
       this.state.phase !== "generating-map" ||
-      Array.from(this.state.players.values()).filter((player) => player.connected).length !== 2
+      currentParticipantIds !== participantIds
     ) return;
 
     this.world = map;
@@ -612,6 +643,30 @@ export class ArenaRoom extends Room<{
     this.state.projectiles.clear();
   }
 
+  private resetToWaiting() {
+    this.mapGeneration += 1;
+    this.clearProjectiles();
+    Array.from(this.state.players.entries()).forEach(([id, player]) => {
+      if (!player.connected) this.state.players.delete(id);
+      else {
+        player.health = 100;
+        player.score = 0;
+        player.consumingEndsAt = 0;
+        player.powerUpCooldownEndsAt = 0;
+        player.speedBoostEndsAt = 0;
+      }
+    });
+    this.state.eliminatedPlayerId = "";
+    this.state.impactItem = emptyStateItem();
+    this.state.matchId = "";
+    this.state.phase = "waiting";
+    this.state.phaseEndsAt = 0;
+    this.state.resultReason = "";
+    this.state.resultReceipt = "";
+    this.state.round = 0;
+    this.state.winnerId = "";
+  }
+
   private removePlayer(userId: string) {
     const player = this.state.players.get(userId);
     if (!player) return;
@@ -625,18 +680,21 @@ export class ArenaRoom extends Room<{
     const opponent = Array.from(this.state.players.values()).find((candidate) =>
       candidate.userId !== userId && candidate.connected
     );
-    if (opponent && this.state.phase !== "match-end") {
+    const matchWasActive = Boolean(this.state.matchId) &&
+      ["countdown", "playing", "round-over"].includes(this.state.phase);
+    if (opponent && matchWasActive) {
       this.clearProjectiles();
       this.state.winnerId = opponent.userId;
       this.state.resultReason = "forfeit";
       this.state.phase = "match-end";
       this.state.phaseEndsAt = 0;
       this.sealResult(Date.now());
-    } else if (!opponent) {
+    } else if (opponent && this.state.phase !== "match-end") {
       this.state.players.delete(userId);
-      this.state.phase = "waiting";
-      this.state.round = 0;
-      this.state.phaseEndsAt = 0;
+      this.resetToWaiting();
+    } else if (!opponent) {
+      this.state.players.clear();
+      this.resetToWaiting();
     }
   }
 

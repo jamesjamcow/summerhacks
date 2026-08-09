@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 import {
@@ -19,10 +19,21 @@ export function CharacterAvatarPreview({
   name: string;
 }) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const [active, setActive] = useState(false);
 
   useEffect(() => {
     const mount = mountRef.current;
     if (!mount) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      setActive(Boolean(entry?.isIntersecting));
+    }, { rootMargin: "150px" });
+    observer.observe(mount);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount || !active) return;
 
     let disposed = false;
     const scene = new THREE.Scene();
@@ -70,24 +81,27 @@ export function CharacterAvatarPreview({
 
     const observer = new ResizeObserver(resize);
     observer.observe(mount);
-    const clock = new THREE.Clock();
+    const timer = new THREE.Timer();
+    timer.connect(document);
     let frame = 0;
-    const render = () => {
-      frame = window.requestAnimationFrame(render);
-      model.rotation.y += Math.min(clock.getDelta(), 0.05) * 0.42;
+    const render = (timestamp: number) => {
+      timer.update(timestamp);
+      model.rotation.y += Math.min(timer.getDelta(), 0.05) * 0.42;
       renderer.render(scene, camera);
+      frame = window.requestAnimationFrame(render);
     };
-    render();
+    frame = window.requestAnimationFrame(render);
 
     return () => {
       disposed = true;
       window.cancelAnimationFrame(frame);
       observer.disconnect();
+      timer.dispose();
       disposeMemoryModel(model);
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [modelUrl]);
+  }, [active, modelUrl]);
 
   return (
     <div

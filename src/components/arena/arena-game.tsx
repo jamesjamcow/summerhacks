@@ -30,7 +30,10 @@ import {
   preloadArenaAssets,
 } from "./arena-assets";
 import type { ArenaItem } from "./arena-types";
-import type { ArenaInputMessage } from "./use-colyseus-arena";
+import type {
+  ArenaInputMessage,
+  ArenaItemAction,
+} from "./use-colyseus-arena";
 
 type ArenaGameProps = {
   active: boolean;
@@ -38,7 +41,7 @@ type ArenaGameProps = {
   localPlayer: ArenaPlayerSnapshot;
   map: ArenaMapSpec;
   onInput: (input: ArenaInputMessage) => void;
-  onUseItem: () => void;
+  onUseItem: (action: ArenaItemAction) => void;
   players: Record<string, ArenaPlayerSnapshot>;
   projectiles: Record<string, ArenaProjectileSnapshot>;
 };
@@ -58,8 +61,10 @@ function standardMaterial(color: string, options: {
 } = {}) {
   return new THREE.MeshStandardMaterial({
     color,
-    emissive: options.emissive,
-    emissiveIntensity: options.emissiveIntensity,
+    ...(options.emissive ? { emissive: options.emissive } : {}),
+    ...(options.emissiveIntensity === undefined
+      ? {}
+      : { emissiveIntensity: options.emissiveIntensity }),
     flatShading: true,
     roughness: options.roughness ?? 0.84,
   });
@@ -450,6 +455,7 @@ export default function ArenaGame({
   const mountRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef(active);
   const inputHandlerRef = useRef(onInput);
+  const itemTypeRef = useRef(item.itemType);
   const localPlayerRef = useRef(localPlayer);
   const playersRef = useRef(players);
   const projectilesRef = useRef(projectiles);
@@ -462,6 +468,7 @@ export default function ArenaGame({
 
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { inputHandlerRef.current = onInput; }, [onInput]);
+  useEffect(() => { itemTypeRef.current = item.itemType; }, [item.itemType]);
   useEffect(() => { useItemHandlerRef.current = onUseItem; }, [onUseItem]);
   useEffect(() => { localPlayerRef.current = localPlayer; }, [localPlayer]);
   useEffect(() => { playersRef.current = players; }, [players]);
@@ -508,16 +515,16 @@ export default function ArenaGame({
     );
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.domElement.className = "arena-world-canvas";
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     mount.appendChild(renderer.domElement);
 
     scene.add(new THREE.HemisphereLight("#e4fdff", "#645246", 2.35));
     const sun = new THREE.DirectionalLight("#fff0d2", 3.4);
     sun.position.set(-17, 24, 11);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(1024, 1024);
     sun.shadow.camera.left = -34;
     sun.shadow.camera.right = 34;
     sun.shadow.camera.top = 30;
@@ -579,10 +586,11 @@ export default function ArenaGame({
       void preloadArenaAssets([arenaItem(projectileItem)]).catch(() => undefined);
     };
     const keys = new Set<string>();
-    const clock = new THREE.Clock();
+    const timer = new THREE.Timer();
+    timer.connect(document);
+    const projectileTarget = new THREE.Vector3();
     let yaw = initialLocalPlayer.yaw;
     let pitch = initialLocalPlayer.pitch;
-    let lastInputAt = 0;
 
     const resize = () => {
       const { clientWidth, clientHeight } = mount;
@@ -591,42 +599,75 @@ export default function ArenaGame({
       camera.updateProjectionMatrix();
     };
     resize();
+    const sendCurrentInput = () => {
+      inputHandlerRef.current({
+        forward: activeRef.current
+          ? Number(keys.has("KeyW")) - Number(keys.has("KeyS"))
+          : 0,
+        strafe: activeRef.current
+          ? Number(keys.has("KeyD")) - Number(keys.has("KeyA"))
+          : 0,
+        jump: activeRef.current && keys.has("Space"),
+        yaw,
+        pitch,
+      });
+    };
+    const movementKeys = new Set(["KeyW", "KeyA", "KeyS", "KeyD", "Space"]);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code === "Space" && document.pointerLockElement === renderer.domElement) {
+      if (movementKeys.has(event.code) && document.pointerLockElement === renderer.domElement) {
         event.preventDefault();
       }
+      const wasPressed = keys.has(event.code);
       keys.add(event.code);
+      if (movementKeys.has(event.code) && !wasPressed) sendCurrentInput();
+      if (event.repeat || !activeRef.current) return;
+      if (event.code === "KeyK") {
+        event.preventDefault();
+        useItemHandlerRef.current("shoot");
+      } else if (event.code === "KeyL" && itemTypeRef.current === "power-up") {
+        event.preventDefault();
+        useItemHandlerRef.current("consume");
+      }
     };
-    const onKeyUp = (event: KeyboardEvent) => keys.delete(event.code);
+    const onKeyUp = (event: KeyboardEvent) => {
+      keys.delete(event.code);
+      if (movementKeys.has(event.code)) sendCurrentInput();
+    };
+    const releaseInput = () => {
+      keys.clear();
+      sendCurrentInput();
+    };
     const onPointerLock = () => setLocked(document.pointerLockElement === renderer.domElement);
     const onMouseMove = (event: MouseEvent) => {
       if (document.pointerLockElement !== renderer.domElement) return;
       yaw -= event.movementX * 0.0022;
       pitch = THREE.MathUtils.clamp(pitch - event.movementY * 0.002, -1.35, 1.35);
     };
-    const throwMemory = (event: MouseEvent) => {
-      if (!activeRef.current) return;
+    const capturePointer = () => {
+      if (!activeRef.current || document.pointerLockElement === renderer.domElement) return;
       if (document.pointerLockElement !== renderer.domElement) {
         void renderer.domElement.requestPointerLock().catch(() => undefined);
-        return;
       }
-      if (event.button !== 0) return;
-      useItemHandlerRef.current();
     };
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", releaseInput);
     document.addEventListener("pointerlockchange", onPointerLock);
     document.addEventListener("mousemove", onMouseMove);
-    renderer.domElement.addEventListener("mousedown", throwMemory);
+    renderer.domElement.addEventListener("mousedown", capturePointer);
+    // Colyseus retains the latest intent, so 10 Hz is enough for aim while
+    // immediate key transitions keep movement responsive. This leaves ample
+    // headroom below the room's abuse limit on slower or recovering browsers.
+    const inputInterval = window.setInterval(sendCurrentInput, 100);
     const observer = new ResizeObserver(resize);
     observer.observe(mount);
 
     let frame = 0;
-    const animate = () => {
+    const animate = (timestamp: number) => {
       frame = requestAnimationFrame(animate);
-      const delta = Math.min(clock.getDelta(), 0.05);
-      const now = performance.now();
+      timer.update(timestamp);
+      const delta = Math.min(timer.getDelta(), 0.05);
       const local = localPlayerRef.current;
       const distance = Math.hypot(camera.position.x - local.x, camera.position.z - local.z);
       const follow = distance > 4 ? 1 : 1 - Math.exp(-14 * delta);
@@ -638,21 +679,6 @@ export default function ArenaGame({
       );
       camera.position.z = THREE.MathUtils.lerp(camera.position.z, local.z, follow);
       camera.rotation.set(pitch, yaw, 0, "YXZ");
-
-      if (now - lastInputAt >= 45) {
-        inputHandlerRef.current({
-          forward: activeRef.current
-            ? Number(keys.has("KeyW")) - Number(keys.has("KeyS"))
-            : 0,
-          strafe: activeRef.current
-            ? Number(keys.has("KeyD")) - Number(keys.has("KeyA"))
-            : 0,
-          jump: activeRef.current && keys.has("Space"),
-          yaw,
-          pitch,
-        });
-        lastInputAt = now;
-      }
 
       const currentOpponent = Object.values(playersRef.current).find(
         (player) => player.userId !== local.userId,
@@ -680,7 +706,7 @@ export default function ArenaGame({
         }
         const smoothing = 1 - Math.exp(-22 * delta);
         visual.object.position.lerp(
-          new THREE.Vector3(projectile.x, projectile.y, projectile.z),
+          projectileTarget.set(projectile.x, projectile.y, projectile.z),
           smoothing,
         );
         visual.object.rotation.x += delta * 5.5;
@@ -694,18 +720,20 @@ export default function ArenaGame({
       });
       renderer.render(scene, camera);
     };
-    animate();
+    frame = requestAnimationFrame(animate);
 
     return () => {
       disposed = true;
       inputHandlerRef.current({ forward: 0, strafe: 0, yaw, pitch, jump: false });
       cancelAnimationFrame(frame);
+      window.clearInterval(inputInterval);
       observer.disconnect();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", releaseInput);
       document.removeEventListener("pointerlockchange", onPointerLock);
       document.removeEventListener("mousemove", onMouseMove);
-      renderer.domElement.removeEventListener("mousedown", throwMemory);
+      renderer.domElement.removeEventListener("mousedown", capturePointer);
       if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
       projectileVisuals.forEach((visual) => visual.dispose());
       landmarkVisuals.forEach((visual) => {
@@ -714,6 +742,7 @@ export default function ArenaGame({
       });
       opponentModel.dispose();
       disposeMemoryModel(environment);
+      timer.dispose();
       renderer.dispose();
       renderer.domElement.remove();
     };
@@ -737,7 +766,7 @@ export default function ArenaGame({
         />
       ) : null}
       <div className="arena-feed">
-        <span>{item.itemType === "power-up" ? "Consume for +20% speed" : `Throw at ${opponent?.name ?? "the other player"}`}</span>
+        <span>{item.itemType === "power-up" ? "Press K to shoot it or L to consume for +20% speed" : `Press K to shoot at ${opponent?.name ?? "the other player"}`}</span>
         <span>Equipped: {item.name} · {item.itemType === "power-up" ? "Power-up" : "Weapon"}</span>
         {localPlayer.speedBoostEndsAt > hudNow ? <span className="arena-boost-status">Speed boosted +20%</span> : null}
         {item.itemType === "power-up" && localPlayer.powerUpCooldownEndsAt > hudNow ? (
@@ -768,7 +797,7 @@ export default function ArenaGame({
         <small>MEMORY LOOP</small>
         <strong>{localPlayer.inventoryIndex + 1}<span>/{localPlayer.inventorySize}</span></strong>
       </div>
-      <div className="arena-controls"><span>W A S D</span> move <span>SPACE</span> jump <span>CLICK</span> {item.itemType === "power-up" ? "consume" : "throw"} <span>ESC</span> cursor</div>
+      <div className="arena-controls"><span>W A S D</span> move <span>SPACE</span> jump <span>K</span> shoot <span>L</span> consume <span>ESC</span> cursor</div>
       {!locked && active ? (
         <button
           className="arena-start"

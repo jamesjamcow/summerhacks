@@ -267,7 +267,11 @@ individual files. The client renders each completed artifact as soon as its job
 returns, adds it to the selected recipient's memory chest, and shows aggregate
 progress for the batch. While a scrapbook is open, its authenticated room
 endpoint refreshes the member roster, avatars, and room-scoped inventories every
-three seconds, so each member sees uploads made by the others.
+three seconds, so each member sees uploads made by the others. Polls run one at a
+time, pause while the tab is hidden or the arena overlay is open, and resume
+immediately when the scrapbook is visible again. The endpoint reads its roster,
+inventory, and match pages concurrently and throttles `last_seen_at` writes to
+once per 30 seconds per member.
 
 Current limitation: a source upload can succeed while Gemini or the generated
 model upload fails. That source row is retained with `processing_status =
@@ -329,21 +333,29 @@ cover remain fair. Identical photo sets are cached in the arena process for fast
 rematches; the cache is intentionally ephemeral and resets with that process.
 Gemini, image-download, or validation failures use the existing balanced garden
 map rather than blocking the match.
+Map generation is tied to the exact pair of connected player IDs. If either
+player leaves before generation completes, that result is discarded instead of
+starting a new pair on the previous pair's map. Finished rooms remove stale
+disconnected slots before the next player is matched, so rematches cannot become
+stuck behind an old participant.
 
 Both players then inhabit the same generated map. Clients send only movement intent,
-jump intent, and aim; the Colyseus simulation owns positions, vertical velocity,
+jump intent, aim, and typed item actions; the Colyseus simulation owns positions, vertical velocity,
 gravity, landings, wall collision, projectiles, hit detection, countdowns,
 one-hit rounds, scores, respawns, reconnects, and forfeits. The larger garden
 arena's shared block geometry, map contract, safe landmark slots, and bounds live
 in `src/lib/arena-world.ts`. The generated map is replicated through Colyseus, so
 the server collision model and Three.js renderer consume the same layout. Schema patches
-replace the former HTTP polling and red-dot proxy hits.
-Each click uses the owner's currently equipped memory according to its signed,
-server-validated type. Weapons become authoritative projectiles and immediately
-advance the server-owned inventory cursor. Power-ups instead run a one-second
-consume action, during which the first-person hand carries the keepsake toward
-the player's face; when the action completes, Colyseus advances the inventory
-and applies exactly 20% extra movement speed for five seconds. The next power-up
+replace the former HTTP polling and red-dot proxy hits. Movement input is emitted
+on each key transition and by a render-independent 10 Hz timer, so a slow WebGL
+frame cannot stop the non-host player's controls from reaching Colyseus.
+`K` shoots the held memory, including a consumable, while `L` consumes it only
+when its signed, server-validated type is `power-up`. Shooting creates an
+authoritative projectile and immediately advances the server-owned inventory
+cursor. Consuming instead runs a one-second action, during which the first-person
+hand carries the keepsake toward the player's face; when the action completes,
+Colyseus advances the inventory and applies exactly 20% extra movement speed for
+five seconds. The next power-up
 cannot be consumed until that five-second boost/cooldown ends, although weapons
 remain usable. Every item is used once in upload inventory order before the
 cursor wraps. Projectiles retain the weapon they were created with even after
@@ -354,6 +366,11 @@ is a live avatar-bearing character at their synchronized transform. When an
 image-backed 3D weapon hits a player, that player sees the attacker's original
 UploadThing image for the projectile that actually landed during the round-end
 memory reveal.
+
+The browser enables Colyseus reconnection immediately, including during the
+first five seconds of map generation and countdown, and retries transient drops
+for the server's 30-second reserved-seat window. Disconnected players stop in
+place while recovering; a forfeit is recorded only after that grace period.
 
 At match completion, Colyseus signs a receipt containing its server-owned match
 ID, room identity, winner, final scores, and result reason. Either authenticated

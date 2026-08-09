@@ -79,6 +79,10 @@ export default function ArenaMatch({
     enabled && preloadStatus === "ready" && arenaItems.length > 0,
   );
   const impactOriginalImageUrl = realtime.snapshot?.impactItem.originalImageUrl;
+  const completedMatchId = realtime.snapshot?.matchId;
+  const resultReceipt = realtime.snapshot?.resultReceipt;
+  const resultWinnerId = realtime.snapshot?.winnerId;
+  const resultPhase = realtime.snapshot?.phase;
 
   useEffect(() => {
     let cancelled = false;
@@ -101,22 +105,22 @@ export default function ArenaMatch({
   }, [impactOriginalImageUrl]);
 
   useEffect(() => {
-    const receipt = realtime.snapshot?.resultReceipt;
     if (
-      realtime.snapshot?.phase !== "match-end" ||
-      !receipt ||
-      savedPage?.matchId === realtime.snapshot.matchId ||
-      savingReceipt.current === receipt
+      resultPhase !== "match-end" ||
+      !resultReceipt ||
+      !completedMatchId ||
+      savedPage?.matchId === completedMatchId ||
+      savingReceipt.current === resultReceipt
     ) {
       return;
     }
 
     let cancelled = false;
-    savingReceipt.current = receipt;
+    savingReceipt.current = resultReceipt;
     setSaveError(undefined);
     const savePage = async () => {
       const response = await fetch("/api/arena/results", {
-        body: JSON.stringify({ receipt }),
+        body: JSON.stringify({ receipt: resultReceipt }),
         headers: { "content-type": "application/json" },
         method: "POST",
       });
@@ -136,12 +140,14 @@ export default function ArenaMatch({
       }
     });
     return () => { cancelled = true; };
-  }, [onPageCreated, realtime.snapshot, saveAttempt, savedPage?.matchId]);
-
-  const completedMatchId = realtime.snapshot?.matchId;
-  const resultReceipt = realtime.snapshot?.resultReceipt;
-  const resultWinnerId = realtime.snapshot?.winnerId;
-  const resultPhase = realtime.snapshot?.phase;
+  }, [
+    completedMatchId,
+    onPageCreated,
+    resultPhase,
+    resultReceipt,
+    saveAttempt,
+    savedPage?.matchId,
+  ]);
 
   useEffect(() => {
     if (

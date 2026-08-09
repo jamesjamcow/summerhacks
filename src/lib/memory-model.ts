@@ -36,6 +36,10 @@ export type MemoryModelSpec = {
   parts: MemoryModelPart[];
 };
 
+export type ClassifiedMemoryModelSpec = MemoryModelSpec & {
+  itemType: MemoryItemType;
+};
+
 const shapeSet = new Set<string>(MEMORY_MODEL_SHAPES);
 const itemTypeSet = new Set<string>(MEMORY_ITEM_TYPES);
 const modelKeys = new Set(["version", "name", "itemType", "parts"]);

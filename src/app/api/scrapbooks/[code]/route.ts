@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, lt } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { scrapbookMatchPages, scrapbookMembers, uploads, userAvatars } from "@/db/schema";
@@ -20,35 +20,67 @@ export async function GET(
   if (!membership) return Response.json({ error: "Room membership required" }, { status: 403 });
 
   const db = getDb();
-  await db
-    .update(scrapbookMembers)
-    .set({ lastSeenAt: new Date() })
-    .where(
-      and(
-        eq(scrapbookMembers.roomId, membership.roomId),
-        eq(scrapbookMembers.clerkUserId, userId),
+  const [, storedMembers, completedUploads, storedPages] = await Promise.all([
+    db
+      .update(scrapbookMembers)
+      .set({ lastSeenAt: new Date() })
+      .where(
+        and(
+          eq(scrapbookMembers.roomId, membership.roomId),
+          eq(scrapbookMembers.clerkUserId, userId),
+          lt(scrapbookMembers.lastSeenAt, new Date(Date.now() - 30_000)),
+        ),
       ),
-    );
-
-  const storedMembers = await db
-    .select({
-      id: scrapbookMembers.clerkUserId,
-      initials: scrapbookMembers.initials,
-      name: scrapbookMembers.displayName,
-      avatarFileType: userAvatars.generatedFileType,
-      avatarFileUrl: userAvatars.generatedFileUrl,
-    })
-    .from(scrapbookMembers)
-    .leftJoin(
-      userAvatars,
-      and(
-        eq(userAvatars.clerkUserId, scrapbookMembers.clerkUserId),
-        eq(userAvatars.processingStatus, "complete"),
-        isNotNull(userAvatars.generatedFileUrl),
-      ),
-    )
-    .where(eq(scrapbookMembers.roomId, membership.roomId))
-    .orderBy(asc(scrapbookMembers.joinedAt));
+    db
+      .select({
+        id: scrapbookMembers.clerkUserId,
+        initials: scrapbookMembers.initials,
+        name: scrapbookMembers.displayName,
+        avatarFileType: userAvatars.generatedFileType,
+        avatarFileUrl: userAvatars.generatedFileUrl,
+      })
+      .from(scrapbookMembers)
+      .leftJoin(
+        userAvatars,
+        and(
+          eq(userAvatars.clerkUserId, scrapbookMembers.clerkUserId),
+          eq(userAvatars.processingStatus, "complete"),
+          isNotNull(userAvatars.generatedFileUrl),
+        ),
+      )
+      .where(eq(scrapbookMembers.roomId, membership.roomId))
+      .orderBy(asc(scrapbookMembers.joinedAt)),
+    db
+      .select({
+        clerkUserId: uploads.clerkUserId,
+        fileName: uploads.fileName,
+        fileType: uploads.fileType,
+        fileUrl: uploads.fileUrl,
+        generatedFileUrl: uploads.generatedFileUrl,
+        generatedFileType: uploads.generatedFileType,
+        id: uploads.id,
+        keyObject: uploads.keyObject,
+        itemType: uploads.itemType,
+        recipientClerkUserId: uploads.recipientClerkUserId,
+        roomId: uploads.roomId,
+      })
+      .from(uploads)
+      .where(
+        and(
+          eq(uploads.processingStatus, "complete"),
+          isNotNull(uploads.generatedFileUrl),
+          eq(uploads.roomId, membership.roomId),
+        ),
+      )
+      .orderBy(desc(uploads.createdAt))
+      .limit(200),
+    db
+      .select()
+      .from(scrapbookMatchPages)
+      .where(eq(scrapbookMatchPages.roomId, membership.roomId))
+      .orderBy(asc(scrapbookMatchPages.pageNumber))
+      .limit(50),
+  ]);
 
   const members = storedMembers.map(({ avatarFileType, avatarFileUrl, ...member }) => ({
     ...member,
@@ -59,31 +91,6 @@ export async function GET(
 
   const memberIds = members.map((member) => member.id);
   const memberNames = new Map(members.map((member) => [member.id, member.name]));
-  const completedUploads = await db
-    .select({
-      clerkUserId: uploads.clerkUserId,
-      fileName: uploads.fileName,
-      fileType: uploads.fileType,
-      fileUrl: uploads.fileUrl,
-      generatedFileUrl: uploads.generatedFileUrl,
-      generatedFileType: uploads.generatedFileType,
-      id: uploads.id,
-      keyObject: uploads.keyObject,
-      itemType: uploads.itemType,
-      recipientClerkUserId: uploads.recipientClerkUserId,
-      roomId: uploads.roomId,
-    })
-    .from(uploads)
-    .where(
-      and(
-        eq(uploads.processingStatus, "complete"),
-        isNotNull(uploads.generatedFileUrl),
-        eq(uploads.roomId, membership.roomId),
-      ),
-    )
-    .orderBy(desc(uploads.createdAt))
-    .limit(200);
-
   const memberIdSet = new Set(memberIds);
   const artifacts = completedUploads.flatMap((upload) => {
     const recipientId = upload.recipientClerkUserId;
@@ -116,12 +123,6 @@ export async function GET(
     }];
   });
 
-  const storedPages = await db
-    .select()
-    .from(scrapbookMatchPages)
-    .where(eq(scrapbookMatchPages.roomId, membership.roomId))
-    .orderBy(asc(scrapbookMatchPages.pageNumber))
-    .limit(50);
   const pages: ScrapbookMatchPage[] = storedPages.map((page) => ({
     completedAt: page.completedAt.toISOString(),
     id: page.id,
