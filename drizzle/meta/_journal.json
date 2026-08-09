@@ -43,6 +43,13 @@
       "when": 1786233461349,
       "tag": "0005_backfill-room-memories",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786286632738,
+      "tag": "0006_right_magma",
+      "breakpoints": true
     }
   ]
 }

@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { MemoryArtifact } from "@/lib/memory-artifacts";
 import type { ArenaPlayerSnapshot } from "@/lib/arena-realtime";
+import type { ScrapbookMatchPage } from "@/lib/scrapbook-pages";
 
 import { preloadArenaAssets } from "./arena-assets";
 import ArenaGame from "./arena-game";
@@ -13,7 +14,10 @@ import { useColyseusArena } from "./use-colyseus-arena";
 
 type ArenaMatchProps = {
   characterImageUrl?: string;
+  enabled?: boolean;
   items: MemoryArtifact[];
+  onPageCreated?: (page: ScrapbookMatchPage) => void;
+  onViewPage?: (pageNumber: number) => void;
   roomCode: string;
   viewer: { id: string; name: string };
 };
@@ -34,7 +38,14 @@ function stateItem(item: ArenaPlayerSnapshot["item"]): ArenaItem {
   };
 }
 
-export default function ArenaMatch({ items, roomCode, viewer }: ArenaMatchProps) {
+export default function ArenaMatch({
+  enabled = true,
+  items,
+  onPageCreated,
+  onViewPage,
+  roomCode,
+  viewer,
+}: ArenaMatchProps) {
   const arenaItems = useMemo<ArenaItem[]>(() => items.flatMap((item) =>
     item.artifactModelUrl || item.artifactImageUrl
       ? [{
@@ -50,9 +61,13 @@ export default function ArenaMatch({ items, roomCode, viewer }: ArenaMatchProps)
   const [preloadStatus, setPreloadStatus] = useState<"loading" | "ready" | "failed">("loading");
   const [preloadAttempt, setPreloadAttempt] = useState(0);
   const [clock, setClock] = useState(() => Date.now());
+  const [savedPage, setSavedPage] = useState<ScrapbookMatchPage>();
+  const [saveError, setSaveError] = useState<string>();
+  const [saveAttempt, setSaveAttempt] = useState(0);
+  const savingReceipt = useRef<string | undefined>(undefined);
   const realtime = useColyseusArena(
     roomCode,
-    preloadStatus === "ready" && arenaItems.length > 0,
+    enabled && preloadStatus === "ready" && arenaItems.length > 0,
   );
   const impactOriginalImageUrl = realtime.snapshot?.impactItem.originalImageUrl;
 
@@ -75,6 +90,44 @@ export default function ArenaMatch({ items, roomCode, viewer }: ArenaMatchProps)
     const image = new Image();
     image.src = impactOriginalImageUrl;
   }, [impactOriginalImageUrl]);
+
+  useEffect(() => {
+    const receipt = realtime.snapshot?.resultReceipt;
+    if (
+      realtime.snapshot?.phase !== "match-end" ||
+      !receipt ||
+      savedPage?.matchId === realtime.snapshot.matchId ||
+      savingReceipt.current === receipt
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    savingReceipt.current = receipt;
+    setSaveError(undefined);
+    const savePage = async () => {
+      const response = await fetch("/api/arena/results", {
+        body: JSON.stringify({ receipt }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const result = await response.json() as { error?: string; page?: ScrapbookMatchPage };
+      if (!response.ok || !result.page) {
+        throw new Error(result.error || "Could not save the scrapbook page.");
+      }
+      if (!cancelled) {
+        setSavedPage(result.page);
+        onPageCreated?.(result.page);
+      }
+    };
+    void savePage().catch((reason: unknown) => {
+      if (!cancelled) {
+        savingReceipt.current = undefined;
+        setSaveError(reason instanceof Error ? reason.message : "Could not save the scrapbook page.");
+      }
+    });
+    return () => { cancelled = true; };
+  }, [onPageCreated, realtime.snapshot, saveAttempt, savedPage?.matchId]);
 
   if (!arenaItems.length) {
     return (
@@ -187,6 +240,30 @@ export default function ArenaMatch({ items, roomCode, viewer }: ArenaMatchProps)
           ))}
         </div>
         <p>{localWon ? "You carried the memory home." : "The memory lives on."}</p>
+        {savedPage ? (
+          <button
+            className="arena-view-page"
+            onClick={() => onViewPage?.(savedPage.pageNumber)}
+            type="button"
+          >
+            View scrapbook page {savedPage.pageNumber}
+          </button>
+        ) : saveError ? (
+          <button
+            className="arena-view-page"
+            onClick={() => {
+              savingReceipt.current = undefined;
+              setSaveError(undefined);
+              setSaveAttempt((attempt) => attempt + 1);
+            }}
+            type="button"
+          >
+            Retry saving page
+          </button>
+        ) : (
+          <small className="arena-saving-page" role="status">Binding a new scrapbook page…</small>
+        )}
+        {saveError ? <small className="arena-save-error" role="alert">{saveError}</small> : null}
       </div>
     );
   }

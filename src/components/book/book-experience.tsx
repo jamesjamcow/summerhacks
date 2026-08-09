@@ -15,6 +15,7 @@ import { CharacterPhotoUpload } from "@/components/character-photo-upload";
 import { MemoryModelPreview } from "@/components/memory-model-preview";
 import { UploadPanel } from "@/components/upload-panel";
 import type { MemoryArtifact } from "@/lib/memory-artifacts";
+import type { ScrapbookMatchPage } from "@/lib/scrapbook-pages";
 
 import { BOOK_SPREADS, TOTAL_SPREADS } from "./book-content";
 
@@ -355,67 +356,46 @@ function SelectedMemberProfile({
   currentUserId,
   items,
   member,
-  onArena,
   onAvatarGenerated,
-  onBack,
   onUpload,
 }: {
   currentUserId: string;
   items: MemoryItem[];
   member: Viewer;
-  onArena: () => void;
   onAvatarGenerated: (avatarUrl: string) => void;
-  onBack: () => void;
   onUpload: () => void;
 }) {
   const isCurrentUser = member.id === currentUserId;
 
   return (
     <div className="right-page-content member-profile-content" key={member.id}>
-      <div className="member-profile-toolbar">
-        <button className="profile-back" onClick={onBack} type="button">← Scrapbook overview</button>
-        <button className="profile-arena" onClick={onArena} type="button">⚔ Arena</button>
-      </div>
-
       <header className="selected-member-header">
-        {member.avatarUrl ? (
-          <div
-            aria-label={`${member.name} character`}
-            className="selected-member-avatar"
-            role="img"
-            style={{ backgroundImage: `url(${member.avatarUrl})` }}
-          />
-        ) : (
-          <div className="selected-member-portrait" aria-hidden="true">
-            <span>{member.initials}</span>
-            <i className="portrait-body" />
-            <i className="portrait-arms" />
-          </div>
-        )}
-        <div>
-          <p>{isCurrentUser ? "You · Memory keeper" : "Scrapbook member"}</p>
-          <h2>{member.name}</h2>
-          <span>Every keepsake added for {member.name} will collect on this page.</span>
-        </div>
-        <div className="profile-chest" aria-hidden="true">
-          <span />
-          <i />
+        <div className="selected-member-copy">
+          {!isCurrentUser ? <p>Scrapbook member</p> : null}
+          <h2>{isCurrentUser ? "Your profile" : member.name}</h2>
+          <span>
+            {isCurrentUser
+              ? "Every keepsake added for you will collect on this page."
+              : `Every keepsake added for ${member.name} will collect on this page.`}
+          </span>
         </div>
       </header>
 
-      <div className="profile-inventory-heading">
-        <div>
-          <p>Inventory</p>
-          <h3>Memory keepsakes</h3>
+      {!isCurrentUser ? (
+        <div className="profile-inventory-heading">
+          <div>
+            <p>Inventory</p>
+            <h3>Memory keepsakes</h3>
+          </div>
+          <span>{items.length}</span>
         </div>
-        <span>{items.length}</span>
-      </div>
+      ) : null}
 
       {items.length ? (
         <div className="inventory-grid profile-inventory-grid">
           {items.map((item) => <InventoryItemCard item={item} key={item.id} />)}
         </div>
-      ) : (
+      ) : !isCurrentUser ? (
         <div className="profile-empty-inventory">
           <div className="profile-empty-mark" aria-hidden="true">✦</div>
           <div>
@@ -423,18 +403,28 @@ function SelectedMemberProfile({
             <p>Add a memory to start their collection.</p>
           </div>
         </div>
-      )}
+      ) : null}
 
-      <div className="profile-memory-action">
-        {isCurrentUser ? (
-          <>
-            <button disabled type="button">+ Upload Memory</button>
-            <p>Others add memories to you.</p>
-          </>
-        ) : (
-          <button onClick={onUpload} type="button">+ Upload Memory for {member.name}</button>
-        )}
-      </div>
+      {!isCurrentUser ? (
+        <div className="profile-memory-action">
+          <button className="memory-upload-ticket" onClick={onUpload} type="button">
+            <span className="memory-upload-ticket-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24">
+                <path d="M12 15V4m0 0L8.5 7.5M12 4l3.5 3.5M5.5 14.5v3.25A2.25 2.25 0 0 0 7.75 20h8.5a2.25 2.25 0 0 0 2.25-2.25V14.5" />
+              </svg>
+            </span>
+            <span className="memory-upload-ticket-copy">
+              <small>Contribute a keepsake</small>
+              <strong>Add a memory for {member.name}</strong>
+              <span>Photos, voice notes, PDFs or text files</span>
+            </span>
+            <span className="memory-upload-ticket-cta" aria-hidden="true">
+              <span>Upload</span>
+              <b>↗</b>
+            </span>
+          </button>
+        </div>
+      ) : null}
 
       {isCurrentUser ? (
         <div className="profile-character-action">
@@ -451,29 +441,122 @@ function ArenaOverlay({
   characterImageUrl,
   items,
   onClose,
+  onPageCreated,
+  onViewPage,
   roomCode,
   viewer,
 }: {
   characterImageUrl?: string;
   items: MemoryItem[];
   onClose: () => void;
+  onPageCreated: (page: ScrapbookMatchPage) => void;
+  onViewPage: (pageNumber: number) => void;
   roomCode: string;
   viewer: Viewer;
 }) {
+  const [entranceComplete, setEntranceComplete] = useState(false);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
   return (
-    <div className="scrapbook-overlay" role="presentation" onMouseDown={onClose}>
+    <div className="arena-experience-overlay" role="presentation">
       <section
         aria-labelledby="arena-title"
         aria-modal="true"
-        className="scrapbook-modal arena-modal arena-game-modal"
+        className="arena-fullscreen-dialog"
         role="dialog"
-        onMouseDown={(event) => event.stopPropagation()}
       >
         <h2 className="sr-only" id="arena-title">Memory Arena</h2>
         <button className="scrapbook-modal-close arena-game-close" onClick={onClose} aria-label="Close arena" type="button">×</button>
-        <ArenaMatch characterImageUrl={characterImageUrl} items={items} roomCode={roomCode} viewer={viewer} />
+        {entranceComplete ? (
+          <ArenaMatch
+            characterImageUrl={characterImageUrl}
+            items={items}
+            onPageCreated={onPageCreated}
+            onViewPage={(pageNumber) => {
+              onViewPage(pageNumber);
+              onClose();
+            }}
+            roomCode={roomCode}
+            viewer={viewer}
+          />
+        ) : (
+          <div className="arena-entry-curtain" role="status" aria-live="polite">
+            <span onAnimationEnd={() => setEntranceComplete(true)}>Arena</span>
+          </div>
+        )}
       </section>
     </div>
+  );
+}
+
+function MatchScrapbookPage({ page }: { page: ScrapbookMatchPage }) {
+  return (
+    <article className="right-page-content match-scrapbook-page" key={page.id}>
+      <header className="match-page-heading">
+        <div>
+          <p>Page {page.pageNumber} · Arena memory</p>
+          <h2>{page.winnerName} won</h2>
+          <span>{page.resultReason === "forfeit" ? "Match decided by forfeit" : "First to three memories"}</span>
+        </div>
+        <div className="match-page-winner" aria-label={`${page.winnerName} won`}>
+          <span aria-hidden="true">★</span>
+          <small>Winner</small>
+        </div>
+      </header>
+
+      <div className="match-page-score" aria-label="Final score">
+        {page.players.map((player) => (
+          <div className={player.userId === page.winnerId ? "is-winner" : ""} key={player.userId}>
+            <span>{player.name}</span>
+            <strong>{player.score}</strong>
+          </div>
+        ))}
+      </div>
+
+      <section className="match-page-memories" aria-labelledby={`page-${page.pageNumber}-memories`}>
+        <div className="match-page-memory-heading">
+          <div>
+            <p>What we brought with us</p>
+            <h3 id={`page-${page.pageNumber}-memories`}>Uploaded memories</h3>
+          </div>
+          <span>{page.memories.length}</span>
+        </div>
+        {page.memories.length ? (
+          <div className="match-memory-grid">
+            {page.memories.map((memory) => (
+              <article className="match-memory-card" key={memory.id}>
+                {memory.fileType.startsWith("image/") ? (
+                  <div
+                    aria-label={memory.originalMemory}
+                    className="match-memory-photo"
+                    role="img"
+                    style={{ backgroundImage: `url(${memory.sourceUrl})` }}
+                  />
+                ) : (
+                  <div className="match-memory-file" aria-hidden="true">
+                    {memory.fileType.startsWith("audio/") ? "♪" : "✦"}
+                  </div>
+                )}
+                <div>
+                  <strong>{memory.name}</strong>
+                  <span>For {memory.recipientName} · by {memory.addedBy}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="match-page-empty">No completed uploads were available when this match ended.</p>
+        )}
+      </section>
+    </article>
   );
 }
 
@@ -489,7 +572,10 @@ function Scrapbook({
   const [selectedMemberId, setSelectedMemberId] = useState<string>();
   const [overlay, setOverlay] = useState<ScrapbookOverlay>();
   const [artifacts, setArtifacts] = useState<MemoryArtifact[]>([]);
+  const [pages, setPages] = useState<ScrapbookMatchPage[]>([]);
+  const [selectedPageNumber, setSelectedPageNumber] = useState<number>();
   const selectedMember = members.find((member) => member.id === selectedMemberId);
+  const selectedPage = pages.find((page) => page.pageNumber === selectedPageNumber) ?? pages.at(-1);
   const viewerArtifacts = artifacts.filter(
     (artifact) => artifact.recipientId === viewer.id,
   );
@@ -508,6 +594,16 @@ function Scrapbook({
       return Array.from(byId.values());
     });
   };
+
+  const addMatchPage = useCallback((page: ScrapbookMatchPage) => {
+    setPages((current) => {
+      const byMatch = new Map(current.map((item) => [item.matchId, item]));
+      byMatch.set(page.matchId, page);
+      return Array.from(byMatch.values()).sort((left, right) => left.pageNumber - right.pageNumber);
+    });
+    setSelectedMemberId(undefined);
+    setSelectedPageNumber(page.pageNumber);
+  }, []);
 
   useEffect(() => {
     if (!selectedMemberId && !overlay) return;
@@ -529,6 +625,7 @@ function Scrapbook({
         const result = await response.json() as {
           artifacts?: MemoryArtifact[];
           members?: Array<Omit<Viewer, "avatarUrl"> & { avatarUrl?: string | null }>;
+          pages?: ScrapbookMatchPage[];
         };
         if (response.ok && result.members && !cancelled) {
           setMembers(result.members.map((member) => ({
@@ -538,6 +635,14 @@ function Scrapbook({
               (member.id === viewer.id ? viewer.avatarUrl : undefined),
           })));
           if (result.artifacts) setArtifacts(result.artifacts);
+          if (result.pages) {
+            setPages(result.pages);
+            setSelectedPageNumber((current) =>
+              current && result.pages?.some((page) => page.pageNumber === current)
+                ? current
+                : result.pages?.at(-1)?.pageNumber,
+            );
+          }
         }
       } catch {
         // Keep the last known member list while the room connection recovers.
@@ -553,23 +658,33 @@ function Scrapbook({
 
   return (
     <section className="scrapbook-stage" aria-label={`${session.name} scrapbook`}>
+      <nav className="scrapbook-top-nav" aria-label="Scrapbook navigation">
+        <button
+          onClick={() => setOverlay("arena")}
+          type="button"
+        >
+          Arena
+        </button>
+      </nav>
       <div className="scrapbook-book">
         <div className="scrapbook-binding" aria-hidden="true" />
         <div className="scrapbook-page scrapbook-page-left">
           <header className="scrapbook-heading">
-            <p>Our scrapbook</p>
-            <h1>{session.name}</h1>
+            <h1>The people in this book</h1>
             <span>Page code · {session.code}</span>
           </header>
 
-          <div className="torn-rule" aria-hidden="true" />
-          <div className="member-list-heading">
+          <div className="scrapbook-stats" aria-label="Scrapbook details">
             <div>
-              <p>The people in this book</p>
-              <span>Characters are placeholders for now.</span>
+              <strong>{members.length}</strong>
+              <span>{members.length === 1 ? "Member" : "Members"}</span>
             </div>
-            <strong>{members.length}</strong>
+            <div>
+              <strong>{artifacts.length}</strong>
+              <span>Memory items</span>
+            </div>
           </div>
+
           <div className="scrapbook-members">
             {members.map((member) => (
               <MemberCharacter
@@ -577,7 +692,9 @@ function Scrapbook({
                 key={member.id}
                 selected={selectedMemberId === member.id}
                 viewer={member}
-                onSelect={() => setSelectedMemberId(member.id)}
+                onSelect={() => setSelectedMemberId((current) =>
+                  current === member.id ? undefined : member.id,
+                )}
               />
             ))}
           </div>
@@ -591,42 +708,33 @@ function Scrapbook({
                 (artifact) => artifact.recipientId === selectedMember.id,
               )}
               member={selectedMember}
-              onArena={() => setOverlay("arena")}
               onAvatarGenerated={handleAvatarGenerated}
-              onBack={() => setSelectedMemberId(undefined)}
               onUpload={() => setOverlay("upload")}
             />
+          ) : selectedPage ? (
+            <>
+              <nav className="match-page-navigation" aria-label="Arena scrapbook pages">
+                {pages.map((page) => (
+                  <button
+                    aria-current={page.pageNumber === selectedPage.pageNumber ? "page" : undefined}
+                    className={page.pageNumber === selectedPage.pageNumber ? "is-current" : ""}
+                    key={page.id}
+                    onClick={() => setSelectedPageNumber(page.pageNumber)}
+                    type="button"
+                  >
+                    {page.pageNumber}
+                  </button>
+                ))}
+              </nav>
+              <MatchScrapbookPage page={selectedPage} />
+            </>
           ) : (
-            <div className="right-page-content overview-page-content">
-              <div className="scrapbook-actions overview-actions">
-                <button className="arena-action" onClick={() => setOverlay("arena")} type="button">
-                  <span aria-hidden="true">⚔</span> Enter Arena
-                </button>
-              </div>
-
-              <header className="memory-heading scrapbook-world-heading">
-                <p>A shared world</p>
-                <h2>Made by remembering.</h2>
-                <span>Every person carries a chest. Select someone from the left page to see the keepsakes growing with them.</span>
-              </header>
-
-              <div className="scrapbook-stats" aria-label="Scrapbook details">
-                <div>
-                  <strong>{members.length}</strong>
-                  <span>{members.length === 1 ? "Member" : "Members"}</span>
-                </div>
-                <div>
-                  <strong>{artifacts.length}</strong>
-                  <span>Memory items</span>
-                </div>
-              </div>
-
-              <section className="memory-wall" aria-labelledby="memory-wall-title">
-                <span className="memory-wall-tape" aria-hidden="true" />
-                <p>Open someone’s page</p>
-                <h3 id="memory-wall-title">Every person keeps a different part of the story.</h3>
-                <span>Select a member card to view their character, chest, and growing memory inventory.</span>
-              </section>
+            <div className="right-page-content match-page-placeholder">
+              <span aria-hidden="true">✦</span>
+              <p>Your first arena story will live here.</p>
+              <h2>Finish a match to make page 1.</h2>
+              <small>The winner and everyone&apos;s uploaded memories will be bound into the scrapbook.</small>
+              <button onClick={() => setOverlay("arena")} type="button">Enter Arena</button>
             </div>
           )}
         </div>
@@ -649,6 +757,11 @@ function Scrapbook({
               characterImageUrl={viewer.avatarUrl}
               items={viewerArtifacts}
               onClose={() => setOverlay(undefined)}
+              onPageCreated={addMatchPage}
+              onViewPage={(pageNumber) => {
+                setSelectedMemberId(undefined);
+                setSelectedPageNumber(pageNumber);
+              }}
               roomCode={session.code}
               viewer={viewer}
             />,
@@ -802,10 +915,13 @@ export function BookExperience({
   }, [dialog, next, previous, step]);
 
   const openBook = () => {
-    if (step !== "cover") return;
+    if (step !== "cover" || openingTimer.current !== undefined) return;
     setStep("opening");
     const animationLength = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 80 : 1_750;
-    openingTimer.current = window.setTimeout(() => setStep("lobby"), animationLength);
+    openingTimer.current = window.setTimeout(() => {
+      openingTimer.current = undefined;
+      setStep("lobby");
+    }, animationLength);
   };
 
   const enterScrapbook = (nextSession: ScrapbookSession) => {
@@ -825,8 +941,21 @@ export function BookExperience({
 
       {step !== "scrapbook" ? (
         <section
-          className="book-hero"
-          aria-label={step === "cover" ? "Closed 3D scrapbook" : "Interactive 3D scrapbook"}
+          aria-label={step === "cover" ? "Open the 3D scrapbook" : "Interactive 3D scrapbook"}
+          className={step === "cover" ? "book-hero is-cover" : "book-hero"}
+          onClick={step === "cover" ? openBook : undefined}
+          onKeyDown={
+            step === "cover"
+              ? (event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    openBook();
+                  }
+                }
+              : undefined
+          }
+          role={step === "cover" ? "button" : undefined}
+          tabIndex={step === "cover" ? 0 : undefined}
         >
           <div
             aria-describedby={step === "lobby" ? "book-instructions" : undefined}
@@ -854,13 +983,6 @@ export function BookExperience({
               onPrevious={previous}
               open={step !== "cover"}
             />
-            {step === "cover" ? (
-              <div className="three-cover-overlay">
-                <button onClick={openBook} type="button">
-                  Open Scrapbook <span aria-hidden="true">→</span>
-                </button>
-              </div>
-            ) : null}
             {step === "lobby" && spread === TOTAL_SPREADS - 1 && !dragPreview ? (
               <div className="final-page-overlay">
                 <FinalPageActions

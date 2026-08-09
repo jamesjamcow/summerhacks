@@ -2,9 +2,10 @@ import { auth } from "@clerk/nextjs/server";
 import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { scrapbookMembers, uploads, userAvatars } from "@/db/schema";
+import { scrapbookMatchPages, scrapbookMembers, uploads, userAvatars } from "@/db/schema";
 import { isMemoryModelFileType } from "@/lib/memory-model";
 import { getRoomMembership, normalizeRoomCode } from "@/lib/scrapbook-rooms";
+import type { ScrapbookMatchPage } from "@/lib/scrapbook-pages";
 
 export async function GET(
   _request: Request,
@@ -104,5 +105,23 @@ export async function GET(
     }];
   });
 
-  return Response.json({ artifacts, code, members, name: membership.roomName });
+  const storedPages = await db
+    .select()
+    .from(scrapbookMatchPages)
+    .where(eq(scrapbookMatchPages.roomId, membership.roomId))
+    .orderBy(asc(scrapbookMatchPages.pageNumber))
+    .limit(50);
+  const pages: ScrapbookMatchPage[] = storedPages.map((page) => ({
+    completedAt: page.completedAt.toISOString(),
+    id: page.id,
+    matchId: page.matchId,
+    memories: page.memories,
+    pageNumber: page.pageNumber,
+    players: page.players,
+    resultReason: page.resultReason === "forfeit" ? "forfeit" : "score",
+    winnerId: page.winnerClerkUserId,
+    winnerName: page.winnerName,
+  }));
+
+  return Response.json({ artifacts, code, members, name: membership.roomName, pages });
 }

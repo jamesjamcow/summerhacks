@@ -11,6 +11,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import type { ArenaMatchState, ArenaPlayer } from "@/components/arena/arena-types";
+import type { ScrapbookPageMemory, ScrapbookPagePlayer } from "@/lib/scrapbook-pages";
 
 export const notes = pgTable(
   "notes",
@@ -112,6 +113,30 @@ export const scrapbookMembers = pgTable(
   (table) => [
     primaryKey({ columns: [table.roomId, table.clerkUserId] }),
     index("scrapbook_members_user_idx").on(table.clerkUserId),
+  ],
+);
+
+export const scrapbookMatchPages = pgTable(
+  "scrapbook_match_pages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    roomId: uuid("room_id")
+      .notNull()
+      .references(() => scrapbookRooms.id, { onDelete: "cascade" }),
+    matchId: uuid("match_id").notNull(),
+    pageNumber: integer("page_number").notNull(),
+    winnerClerkUserId: text("winner_clerk_user_id").notNull(),
+    winnerName: text("winner_name").notNull(),
+    resultReason: text("result_reason").notNull(),
+    players: jsonb("players").$type<ScrapbookPagePlayer[]>().notNull(),
+    memories: jsonb("memories").$type<ScrapbookPageMemory[]>().notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("scrapbook_match_pages_match_unique").on(table.matchId),
+    uniqueIndex("scrapbook_match_pages_room_page_unique").on(table.roomId, table.pageNumber),
+    index("scrapbook_match_pages_room_idx").on(table.roomId),
   ],
 );
 

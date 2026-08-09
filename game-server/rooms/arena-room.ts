@@ -17,13 +17,17 @@ import {
   type ArenaTicketPayload,
   verifyArenaTicket,
 } from "../../src/lib/arena-ticket";
+import { createArenaResultReceipt } from "../../src/lib/arena-result-receipt";
 import {
   ARENA_MOVE_SPEED,
   ARENA_PLAYER_HEIGHT,
   ARENA_PLAYER_RADIUS,
+  ARENA_GRAVITY,
+  ARENA_JUMP_SPEED,
   ARENA_PROJECTILE_SPEED,
   ARENA_ROUNDS_TO_WIN,
   ARENA_SPAWNS,
+  getArenaLandingHeight,
   isArenaPositionBlocked,
   isArenaProjectileBlocked,
 } from "../../src/lib/arena-world";
@@ -33,6 +37,7 @@ type ArenaInput = {
   strafe: number;
   yaw: number;
   pitch: number;
+  jump: boolean;
 };
 
 type ArenaRoomClient = Client<{
@@ -45,10 +50,24 @@ type ProjectileRuntime = {
   expiresAt: number;
 };
 
+type PlayerMotionRuntime = {
+  grounded: boolean;
+  jumpHeld: boolean;
+  jumpQueued: boolean;
+  verticalVelocity: number;
+};
+
 const COUNTDOWN_MS = 3_000;
 const ROUND_BREAK_MS = 3_000;
 const SHOT_COOLDOWN_MS = 320;
-const EMPTY_INPUT: ArenaInput = { forward: 0, strafe: 0, yaw: 0, pitch: 0 };
+const PROJECTILE_LIFETIME_MS = 4_000;
+const EMPTY_INPUT: ArenaInput = {
+  forward: 0,
+  strafe: 0,
+  yaw: 0,
+  pitch: 0,
+  jump: false,
+};
 
 function finite(value: unknown) {
   return typeof value === "number" && Number.isFinite(value);
@@ -109,9 +128,11 @@ export class ArenaRoom extends Room<{
   state = new ArenaState({
     eliminatedPlayerId: "",
     impactItem: emptyStateItem(),
+    matchId: "",
     phase: "waiting",
     phaseEndsAt: 0,
     resultReason: "",
+    resultReceipt: "",
     roomCode: "",
     round: 0,
     winnerId: "",
@@ -121,6 +142,7 @@ export class ArenaRoom extends Room<{
   private readonly inventoryByUser = new Map<string, ArenaTicketItem[]>();
   private readonly inventoryCursorByUser = new Map<string, number>();
   private readonly lastShotAt = new Map<string, number>();
+  private readonly motionByUser = new Map<string, PlayerMotionRuntime>();
   private readonly projectileRuntime = new Map<string, ProjectileRuntime>();
 
   static async onAuth(token: string, options: unknown) {
@@ -186,6 +208,12 @@ export class ArenaRoom extends Room<{
     this.inventoryByUser.set(ticket.userId, ticket.inventory);
     this.inventoryCursorByUser.set(ticket.userId, 0);
     this.inputByUser.set(ticket.userId, { ...EMPTY_INPUT, yaw: spawn.yaw });
+    this.motionByUser.set(ticket.userId, {
+      grounded: true,
+      jumpHeld: false,
+      jumpQueued: false,
+      verticalVelocity: 0,
+    });
     this.state.players.set(ticket.userId, player);
     this.equipPlayer(player);
 
@@ -219,11 +247,20 @@ export class ArenaRoom extends Room<{
     const input = message as Record<string, unknown>;
     if (!finite(input.forward) || !finite(input.strafe) || !finite(input.yaw) || !finite(input.pitch)) return;
 
-    this.inputByUser.set(client.userData?.userId || "", {
+    const userId = client.userData?.userId || "";
+    const jump = input.jump === true;
+    const motion = this.motionByUser.get(userId);
+    if (motion) {
+      if (jump && !motion.jumpHeld) motion.jumpQueued = true;
+      motion.jumpHeld = jump;
+    }
+
+    this.inputByUser.set(userId, {
       forward: clamp(input.forward as number, -1, 1),
       strafe: clamp(input.strafe as number, -1, 1),
       yaw: clamp(input.yaw as number, -Math.PI * 4, Math.PI * 4),
       pitch: clamp(input.pitch as number, -1.35, 1.35),
+      jump,
     });
   }
 
@@ -251,11 +288,11 @@ export class ArenaRoom extends Room<{
       vy,
       vz,
       x: player.x + (vx / ARENA_PROJECTILE_SPEED) * 0.65,
-      y: ARENA_PLAYER_HEIGHT - 0.15,
+      y: player.y + ARENA_PLAYER_HEIGHT - 0.15,
       z: player.z + (vz / ARENA_PROJECTILE_SPEED) * 0.65,
     });
     this.state.projectiles.set(id, projectile);
-    this.projectileRuntime.set(id, { age: 0, expiresAt: now + 2_500 });
+    this.projectileRuntime.set(id, { age: 0, expiresAt: now + PROJECTILE_LIFETIME_MS });
     this.advanceInventory(player);
   }
 
@@ -280,6 +317,7 @@ export class ArenaRoom extends Room<{
     if (this.state.winnerId) {
       this.state.phase = "match-end";
       this.state.phaseEndsAt = 0;
+      this.sealResult(now);
       return;
     }
 
@@ -296,9 +334,16 @@ export class ArenaRoom extends Room<{
 
   private movePlayer(player: ArenaPlayerState, delta: number) {
     const input = this.inputByUser.get(player.userId) || EMPTY_INPUT;
+    const motion = this.motionByUser.get(player.userId);
     player.yaw = input.yaw;
     player.pitch = input.pitch;
-    if (!player.connected || player.health <= 0) return;
+    if (!player.connected || player.health <= 0 || !motion) return;
+
+    if (motion.jumpQueued && motion.grounded) {
+      motion.grounded = false;
+      motion.verticalVelocity = ARENA_JUMP_SPEED;
+    }
+    motion.jumpQueued = false;
 
     let forward = input.forward;
     let strafe = input.strafe;
@@ -311,8 +356,35 @@ export class ArenaRoom extends Room<{
     const distance = ARENA_MOVE_SPEED * delta;
     const dx = (-Math.sin(input.yaw) * forward + Math.cos(input.yaw) * strafe) * distance;
     const dz = (-Math.cos(input.yaw) * forward - Math.sin(input.yaw) * strafe) * distance;
-    if (!isArenaPositionBlocked(player.x + dx, player.z)) player.x += dx;
-    if (!isArenaPositionBlocked(player.x, player.z + dz)) player.z += dz;
+    if (!isArenaPositionBlocked(player.x + dx, player.y, player.z)) player.x += dx;
+    if (!isArenaPositionBlocked(player.x, player.y, player.z + dz)) player.z += dz;
+
+    if (motion.grounded) {
+      const support = getArenaLandingHeight(
+        player.x,
+        player.z,
+        player.y + 0.06,
+        player.y - 0.06,
+      );
+      if (support === undefined || Math.abs(support - player.y) > 0.08) {
+        motion.grounded = false;
+      }
+    }
+
+    if (!motion.grounded) {
+      motion.verticalVelocity -= ARENA_GRAVITY * delta;
+      const nextY = player.y + motion.verticalVelocity * delta;
+      const landingHeight = motion.verticalVelocity <= 0
+        ? getArenaLandingHeight(player.x, player.z, player.y, nextY)
+        : undefined;
+      if (landingHeight !== undefined) {
+        player.y = landingHeight;
+        motion.grounded = true;
+        motion.verticalVelocity = 0;
+      } else {
+        player.y = Math.max(0, nextY);
+      }
+    }
   }
 
   private moveProjectile(projectile: ArenaProjectileState, delta: number, now: number) {
@@ -377,8 +449,8 @@ export class ArenaRoom extends Room<{
     const closestZ = z1 + dz * t;
     const closestY = y1 + (y2 - y1) * t;
     return Math.hypot(player.x - closestX, player.z - closestZ) <= ARENA_PLAYER_RADIUS + 0.2 &&
-      closestY >= 0.05 &&
-      closestY <= ARENA_PLAYER_HEIGHT + 0.25;
+      closestY >= player.y + 0.05 &&
+      closestY <= player.y + ARENA_PLAYER_HEIGHT + 0.25;
   }
 
   private resolveHit(
@@ -406,9 +478,11 @@ export class ArenaRoom extends Room<{
   }
 
   private startCountdown() {
+    this.state.matchId = randomUUID();
     this.state.round = 1;
     this.state.winnerId = "";
     this.state.resultReason = "";
+    this.state.resultReceipt = "";
     this.state.eliminatedPlayerId = "";
     this.state.impactItem = emptyStateItem();
     this.state.players.forEach((player) => {
@@ -448,6 +522,12 @@ export class ArenaRoom extends Room<{
       player.yaw = spawn.yaw;
       player.pitch = 0;
       this.inputByUser.set(player.userId, { ...EMPTY_INPUT, yaw: spawn.yaw });
+      this.motionByUser.set(player.userId, {
+        grounded: true,
+        jumpHeld: false,
+        jumpQueued: false,
+        verticalVelocity: 0,
+      });
     });
   }
 
@@ -469,6 +549,7 @@ export class ArenaRoom extends Room<{
     this.inventoryByUser.delete(userId);
     this.inventoryCursorByUser.delete(userId);
     this.lastShotAt.delete(userId);
+    this.motionByUser.delete(userId);
 
     const opponent = Array.from(this.state.players.values()).find((candidate) =>
       candidate.userId !== userId && candidate.connected
@@ -479,11 +560,40 @@ export class ArenaRoom extends Room<{
       this.state.resultReason = "forfeit";
       this.state.phase = "match-end";
       this.state.phaseEndsAt = 0;
+      this.sealResult(Date.now());
     } else if (!opponent) {
       this.state.players.delete(userId);
       this.state.phase = "waiting";
       this.state.round = 0;
       this.state.phaseEndsAt = 0;
     }
+  }
+
+  private sealResult(completedAt: number) {
+    if (this.state.resultReceipt || !this.state.matchId || !this.state.winnerId) return;
+    const players = Array.from(this.state.players.values()).map((player) => ({
+      name: player.name,
+      score: player.score,
+      userId: player.userId,
+    }));
+    if (players.length !== 2) return;
+
+    const winner = players.find((player) => player.userId === this.state.winnerId);
+    if (!winner || (this.state.resultReason !== "score" && this.state.resultReason !== "forfeit")) {
+      return;
+    }
+
+    const firstTicket = Array.from(this.clients).map((client) => client.auth).find(Boolean);
+    if (!firstTicket) return;
+    this.state.resultReceipt = createArenaResultReceipt({
+      completedAt,
+      matchId: this.state.matchId,
+      players,
+      resultReason: this.state.resultReason,
+      roomCode: this.state.roomCode,
+      roomId: firstTicket.roomId,
+      version: 1,
+      winnerId: winner.userId,
+    });
   }
 }

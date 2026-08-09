@@ -16,6 +16,7 @@ export function CharacterPhotoUpload({
   return (
     <div className="character-photo-upload">
       <UploadDropzone
+        className="character-photo-dropzone"
         endpoint="characterPhoto"
         content={{
           label: "Choose a photo of yourself",

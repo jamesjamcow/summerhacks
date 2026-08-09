@@ -52,6 +52,7 @@ duplicate version numbers elsewhere unless a compatibility note requires it.
 | `/api/scrapbooks` | Signed-in users | Create a room or join one by its invite code |
 | `/api/scrapbooks/[code]` | Room members | Refresh the authenticated room roster, avatars, and shared inventories |
 | `/api/arena/session` | Room members with an inventory | Issue a short-lived signed ticket and the Colyseus endpoint |
+| `/api/arena/results` | Authenticated match participants | Verify a Colyseus result receipt and create the room's next scrapbook page |
 | `/api/uploadthing` | Public metadata, authenticated uploads | UploadThing GET/POST route handler |
 
 `src/proxy.ts` initializes Clerk's request integration. Authorization lives next
@@ -170,9 +171,13 @@ than appending a new record.
 
 `scrapbook_rooms` stores a server-generated invite code and the Clerk ID of its
 creator. `scrapbook_members` records which authenticated users joined each room,
-along with their display metadata. `arena_matches` is retained as a legacy table
+along with their display metadata. `scrapbook_match_pages` stores one immutable,
+numbered result page per authoritative arena match: the winner, final players and
+scores, result reason, completion time, and a snapshot of the room's completed
+memory uploads. Unique match and room/page keys make submission idempotent and
+keep the page sequence unambiguous. `arena_matches` is retained as a legacy table
 for existing data, but the live arena no longer reads or writes it. Colyseus room
-state is intentionally ephemeral and is disposed when its players leave.
+state is otherwise ephemeral and is disposed when its players leave.
 
 Ownership-sensitive tables index Clerk IDs. Those values deliberately reference Clerk by
 identifier rather than a Postgres foreign key because there is no local users
@@ -296,10 +301,13 @@ name, avatar, and the room-scoped inventory from Neon; no client-supplied user I
 or loadout is trusted. The browser presents the ticket to Colyseus, which matches
 at most two authenticated members by scrapbook code.
 
-Both players then inhabit the same map. Clients send only movement intent and
-aim; the Colyseus simulation owns positions, wall collision, projectiles, hit
-detection, countdowns, one-hit rounds, scores, respawns, reconnects, and
-forfeits. Schema patches replace the former HTTP polling and red-dot proxy hits.
+Both players then inhabit the same map. Clients send only movement intent,
+jump intent, and aim; the Colyseus simulation owns positions, vertical velocity,
+gravity, landings, wall collision, projectiles, hit detection, countdowns,
+one-hit rounds, scores, respawns, reconnects, and forfeits. The larger garden
+arena's shared block geometry and bounds live in `src/lib/arena-world.ts`, so the
+server collision model and Three.js renderer use the same layout. Schema patches
+replace the former HTTP polling and red-dot proxy hits.
 Each accepted throw uses the owner's currently equipped memory and immediately
 advances their server-owned inventory cursor. Every item is used once in upload
 inventory order before the cursor wraps to the first item, continuously across
@@ -311,6 +319,15 @@ avatar-bearing character at their synchronized transform. When an image-backed
 3D keepsake hits a player, that player sees the attacker's original UploadThing
 image for the projectile that actually landed during the round-end memory
 reveal.
+
+At match completion, Colyseus signs a receipt containing its server-owned match
+ID, room identity, winner, final scores, and result reason. Either authenticated
+participant may submit it to `/api/arena/results`; the route verifies the HMAC,
+participant identity, and room membership before writing. It snapshots the
+room's completed uploads and assigns the next page number. Both clients may
+submit safely because the match ID is unique. The scrapbook poll includes these
+pages, and the result screen links to the new page showing the winner, score, and
+uploaded memories.
 
 ## Server and client boundaries
 
@@ -350,7 +367,10 @@ migrated Neon database: sign in, create a note, upload a permitted file, refresh
 the dashboard, and verify that another Clerk account cannot see those records.
 For the arena, open the same scrapbook from two Clerk accounts, enter the arena
 from both, verify each sees the other's movement, and confirm only a projectile
-that intersects the remote character scores a round.
+that intersects the remote character scores a round. Finish the match, confirm
+both clients resolve to the same numbered result page, then close the arena and
+verify that page shows the authoritative winner, final score, and uploaded
+memory snapshot.
 
 ## Deployment
 

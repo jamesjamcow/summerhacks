@@ -14,7 +14,7 @@ import {
 
 const PAGE_WIDTH = 2.72;
 const PAGE_HEIGHT = 3.64;
-const BOOK_SCALE_MULTIPLIER = 1.3;
+const BOOK_SCALE_MULTIPLIER = 1.69;
 const CANVAS_OVERSCAN = 2;
 const OVERSCAN_CAMERA_FOV = 69.107;
 const PAGE_SEGMENTS = 48;
@@ -103,6 +103,38 @@ function drawSpacedText(
     context.fillText(character, cursor, y);
     cursor += context.measureText(character).width + spacing;
   });
+}
+
+function drawWrappedRuns(
+  context: CanvasRenderingContext2D,
+  runs: ReadonlyArray<{ font: string; text: string }>,
+  x: number,
+  y: number,
+  maxWidth: number,
+  lineHeight: number,
+) {
+  let cursorX = x;
+  let cursorY = y;
+
+  runs.forEach((run) => {
+    run.text.split(/\s+/).forEach((word) => {
+      context.font = run.font;
+      const wordWidth = context.measureText(word).width;
+      const spaceWidth = context.measureText(" ").width;
+
+      if (cursorX > x && cursorX + spaceWidth + wordWidth > x + maxWidth) {
+        cursorX = x;
+        cursorY += lineHeight;
+      } else if (cursorX > x) {
+        cursorX += spaceWidth;
+      }
+
+      context.fillText(word, cursorX, cursorY);
+      cursorX += wordWidth;
+    });
+  });
+
+  return cursorY;
 }
 
 function drawPageArtwork(
@@ -208,8 +240,28 @@ function drawPageContent(
 
   if (content.note) {
     context.fillStyle = "rgba(53, 35, 26, 0.62)";
-    context.font = 'italic 21px Georgia, "Times New Roman", serif';
-    context.fillText(content.note, x, cursorY);
+    if (content.noteStrong) {
+      cursorY = drawWrappedRuns(
+        context,
+        [
+          {
+            font: '23px Georgia, "Times New Roman", serif',
+            text: content.note,
+          },
+          {
+            font: '700 23px Georgia, "Times New Roman", serif',
+            text: content.noteStrong,
+          },
+        ],
+        x,
+        cursorY,
+        maxWidth,
+        34,
+      );
+    } else {
+      context.font = 'italic 21px Georgia, "Times New Roman", serif';
+      context.fillText(content.note, x, cursorY);
+    }
   }
 
   if (content.navigation?.length) {
@@ -958,7 +1010,11 @@ export default function BookScene(props: BookSceneProps) {
   return (
     <div className="book-canvas-shell">
       <Canvas
-        aria-label="An interactive open book. Drag a page left to move forward or right to move back."
+        aria-label={
+          props.open
+            ? "An interactive open 3D scrapbook. Drag a page left to move forward or right to move back."
+            : "A closed interactive 3D scrapbook. Click anywhere on the page to open it."
+        }
         camera={{
           fov: OVERSCAN_CAMERA_FOV,
           near: 0.1,

@@ -5,6 +5,7 @@ export type PageContent = {
   title: string;
   body: string;
   note?: string;
+  noteStrong?: string;
   navigation?: readonly string[];
   artwork: PageArtwork;
   accent: string;
@@ -18,14 +19,6 @@ export const BOOK_SPREADS = [
   {
     kicker: "Open a page",
     title: "Give the idea a room",
-  },
-  {
-    kicker: "Bring your people",
-    title: "Make the room feel alive",
-  },
-  {
-    kicker: "Begin together",
-    title: "Your next page starts here",
   },
 ] as const;
 
@@ -44,9 +37,10 @@ export const PAGE_LEAVES: Array<{ front: PageContent; back: PageContent }> = [
   {
     front: {
       eyebrow: "A little book of",
-      title: "Summerhacks",
-      body: "Strange ideas. Fast friends. One more thing worth staying up for.",
-      note: "Turn the corner →",
+      title: "Scrapshot",
+      body: "Most social apps let you decide how the world sees you. You choose the photos, write the bio, and build the profile. We thought it would be way more fun if you had absolutely no control.",
+      note: "Scrapshot started with a simple idea:",
+      noteStrong: "what if your friends built your character from the memories they have of you?",
       artwork: "orbit",
       accent: "#f1a26f",
     },
@@ -57,42 +51,6 @@ export const PAGE_LEAVES: Array<{ front: PageContent; back: PageContent }> = [
       note: "Start with a sentence.",
       artwork: "door",
       accent: "#c66b52",
-    },
-  },
-  {
-    front: {
-      eyebrow: "A room with a pulse",
-      title: "Every page is a lobby.",
-      body: "It is the place everyone lands before the build begins. One link, one shared context, one less tab to lose.",
-      note: "Small rooms make bold work.",
-      artwork: "waves",
-      accent: "#7f87df",
-    },
-    back: {
-      eyebrow: "02 / Bring your people",
-      title: "The right crew changes the shape of an idea.",
-      body: "Share the code with friends, teammates, or someone you just met. The page gets better every time a new perspective walks in.",
-      note: "Leave a seat open.",
-      artwork: "constellation",
-      accent: "#ed6459",
-    },
-  },
-  {
-    front: {
-      eyebrow: "One link. One place.",
-      title: "Make the first move feel easy.",
-      body: "Create a page when you have the idea. Join one when someone else has the spark. Either way, begin before it feels finished.",
-      note: "The best builds start a little early.",
-      artwork: "orbit",
-      accent: "#8e91ef",
-    },
-    back: {
-      eyebrow: "03 / Begin together",
-      title: "There is no wrong first line.",
-      body: "A room is only empty until somebody enters. Pick a page, invite a person, and give the idea a chance to surprise you.",
-      note: "See you on the other side.",
-      artwork: "sun",
-      accent: "#f08a62",
     },
   },
 ];

@@ -43,12 +43,14 @@ export type ArenaProjectileState = SchemaType<typeof ArenaProjectileState>;
 
 export const ArenaState = schema({
   roomCode: "string",
+  matchId: "string",
   phase: "string",
   round: "uint8",
   phaseEndsAt: "float64",
   winnerId: "string",
   eliminatedPlayerId: "string",
   resultReason: "string",
+  resultReceipt: "string",
   impactItem: ArenaItemState,
   players: { map: ArenaPlayerState, default: new Map() },
   projectiles: { map: ArenaProjectileState, default: new Map() },
@@ -100,12 +102,14 @@ export type ArenaProjectileSnapshot = {
 
 export type ArenaRealtimeSnapshot = {
   roomCode: string;
+  matchId: string;
   phase: ArenaRealtimePhase;
   round: number;
   phaseEndsAt: number;
   winnerId: string;
   eliminatedPlayerId: string;
   resultReason: "score" | "forfeit" | "";
+  resultReceipt: string;
   impactItem: ArenaPlayerSnapshot["item"];
   players: Record<string, ArenaPlayerSnapshot>;
   projectiles: Record<string, ArenaProjectileSnapshot>;
@@ -123,12 +127,14 @@ export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
 
   return {
     roomCode: state.roomCode,
+    matchId: state.matchId,
     phase: state.phase as ArenaRealtimePhase,
     round: state.round,
     phaseEndsAt: state.phaseEndsAt,
     winnerId: state.winnerId,
     eliminatedPlayerId: state.eliminatedPlayerId,
     resultReason: state.resultReason as ArenaRealtimeSnapshot["resultReason"],
+    resultReceipt: state.resultReceipt,
     impactItem: itemSnapshot(state.impactItem),
     players: Object.fromEntries(Array.from(state.players.entries()).map(([id, player]) => [
       id,

@@ -8,7 +8,14 @@ import type {
   ArenaPlayerSnapshot,
   ArenaProjectileSnapshot,
 } from "@/lib/arena-realtime";
-import { ARENA_BLOCKS } from "@/lib/arena-world";
+import {
+  ARENA_BLOCKS,
+  ARENA_DECORATIONS,
+  ARENA_GROUND_DEPTH,
+  ARENA_GROUND_WIDTH,
+  type ArenaBlock,
+  type ArenaDecoration,
+} from "@/lib/arena-world";
 import { createMemoryModel, disposeMemoryModel } from "@/lib/three-memory-model";
 
 import {
@@ -36,6 +43,212 @@ type ProjectileVisual = {
 };
 
 const PLAYER_HEIGHT = 1.65;
+
+function standardMaterial(color: string, options: {
+  emissive?: string;
+  emissiveIntensity?: number;
+  roughness?: number;
+} = {}) {
+  return new THREE.MeshStandardMaterial({
+    color,
+    emissive: options.emissive,
+    emissiveIntensity: options.emissiveIntensity,
+    flatShading: true,
+    roughness: options.roughness ?? 0.84,
+  });
+}
+
+function shadowed(mesh: THREE.Mesh, receiveShadow = true) {
+  mesh.castShadow = true;
+  mesh.receiveShadow = receiveShadow;
+  return mesh;
+}
+
+function createEnvironmentBlock(block: ArenaBlock) {
+  const group = new THREE.Group();
+  group.position.set(block.x, block.y, block.z);
+
+  const base = shadowed(new THREE.Mesh(
+    new THREE.BoxGeometry(block.width, block.height, block.depth),
+    standardMaterial(block.color, { roughness: block.style === "stone" ? 0.95 : 0.82 }),
+  ));
+  group.add(base);
+
+  const trimColor = new THREE.Color(block.color).multiplyScalar(0.72);
+  const cap = shadowed(new THREE.Mesh(
+    new THREE.BoxGeometry(block.width + 0.06, 0.1, block.depth + 0.06),
+    standardMaterial(`#${trimColor.getHexString()}`),
+  ));
+  cap.position.y = block.height / 2 + 0.05;
+  group.add(cap);
+
+  if (block.style === "timber") {
+    const slatCount = Math.max(2, Math.min(6, Math.round(block.width / 1.5)));
+    for (let index = 1; index < slatCount; index += 1) {
+      const x = -block.width / 2 + (block.width * index) / slatCount;
+      [-1, 1].forEach((side) => {
+        const slat = shadowed(new THREE.Mesh(
+          new THREE.BoxGeometry(0.1, block.height * 0.88, 0.07),
+          standardMaterial("#5a382c"),
+        ));
+        slat.position.set(x, 0, side * (block.depth / 2 + 0.035));
+        group.add(slat);
+      });
+    }
+  }
+
+  if (block.style === "planter") {
+    const shrubCount = Math.max(2, Math.floor(block.width / 1.7));
+    for (let index = 0; index < shrubCount; index += 1) {
+      const shrub = shadowed(new THREE.Mesh(
+        new THREE.DodecahedronGeometry(0.48 + (index % 2) * 0.08, 0),
+        standardMaterial(index % 2 ? "#496b51" : "#5d7d55"),
+      ));
+      shrub.position.set(
+        -block.width / 2 + ((index + 0.5) * block.width) / shrubCount,
+        block.height / 2 + 0.35,
+        0,
+      );
+      group.add(shrub);
+    }
+  }
+
+  if (block.style === "wall") {
+    const inset = shadowed(new THREE.Mesh(
+      new THREE.BoxGeometry(block.width > block.depth ? block.width * 0.96 : block.width + 0.04, 0.28, block.width > block.depth ? block.depth + 0.05 : block.depth * 0.96),
+      standardMaterial("#414c49"),
+    ));
+    inset.position.y = block.height / 2 - 0.42;
+    group.add(inset);
+  }
+
+  return group;
+}
+
+function createDecoration(decoration: ArenaDecoration) {
+  const group = new THREE.Group();
+  const scale = decoration.scale ?? 1;
+  group.position.set(decoration.x, 0, decoration.z);
+  group.rotation.y = decoration.rotation ?? 0;
+  group.scale.setScalar(scale);
+
+  if (decoration.kind === "tree") {
+    const trunk = shadowed(new THREE.Mesh(
+      new THREE.CylinderGeometry(0.3, 0.48, 3.4, 7),
+      standardMaterial("#624734"),
+    ));
+    trunk.position.y = 1.7;
+    group.add(trunk);
+    [
+      [-0.55, 3.45, 0.1, 1.25],
+      [0.48, 3.85, 0.15, 1.35],
+      [0, 4.55, -0.15, 1.2],
+    ].forEach(([x, y, z, radius], index) => {
+      const crown = shadowed(new THREE.Mesh(
+        new THREE.DodecahedronGeometry(radius, 0),
+        standardMaterial(index === 1 ? "#47745b" : "#588364"),
+      ));
+      crown.position.set(x, y, z);
+      group.add(crown);
+    });
+  } else if (decoration.kind === "lamp") {
+    const pole = shadowed(new THREE.Mesh(
+      new THREE.CylinderGeometry(0.07, 0.11, 3.25, 8),
+      standardMaterial("#293d43", { roughness: 0.55 }),
+    ));
+    pole.position.y = 1.63;
+    group.add(pole);
+    const shade = shadowed(new THREE.Mesh(
+      new THREE.ConeGeometry(0.34, 0.48, 8),
+      standardMaterial("#304d51"),
+    ));
+    shade.position.y = 3.34;
+    shade.rotation.x = Math.PI;
+    group.add(shade);
+    const glow = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.19, 1),
+      standardMaterial("#ffe8a3", { emissive: "#ffc94a", emissiveIntensity: 2 }),
+    );
+    glow.position.y = 3.15;
+    group.add(glow);
+  } else if (decoration.kind === "flag") {
+    const pole = shadowed(new THREE.Mesh(
+      new THREE.CylinderGeometry(0.035, 0.055, 2.5, 6),
+      standardMaterial("#313c40"),
+    ));
+    pole.position.y = 3.8;
+    group.add(pole);
+    const flag = shadowed(new THREE.Mesh(
+      new THREE.PlaneGeometry(1.35, 0.72),
+      new THREE.MeshStandardMaterial({
+        color: decoration.color ?? "#ef6657",
+        roughness: 0.72,
+        side: THREE.DoubleSide,
+      }),
+    ), false);
+    flag.position.set(0.7, 4.65, 0);
+    group.add(flag);
+  } else if (decoration.kind === "rock") {
+    const rock = shadowed(new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.65, 0),
+      standardMaterial("#6c7774", { roughness: 1 }),
+    ));
+    rock.scale.set(1.35, 0.65, 0.9);
+    rock.position.y = 0.38;
+    group.add(rock);
+  } else {
+    for (let index = 0; index < 5; index += 1) {
+      const bladeHeight = 0.72 + (index % 2) * 0.18;
+      const blade = shadowed(new THREE.Mesh(
+        new THREE.ConeGeometry(0.09, bladeHeight, 4),
+        standardMaterial(index % 2 ? "#718957" : "#8b9b63"),
+      ), false);
+      blade.position.set((index - 2) * 0.13, bladeHeight / 2, (index % 2) * 0.1);
+      blade.rotation.z = (index - 2) * 0.1;
+      group.add(blade);
+    }
+  }
+
+  return group;
+}
+
+function createArenaEnvironment() {
+  const root = new THREE.Group();
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(ARENA_GROUND_WIDTH, ARENA_GROUND_DEPTH),
+    standardMaterial("#71806a", { roughness: 0.98 }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  root.add(ground);
+
+  const pathMaterial = standardMaterial("#b19a78", { roughness: 1 });
+  const eastWestPath = new THREE.Mesh(new THREE.PlaneGeometry(51, 5.2), pathMaterial);
+  eastWestPath.rotation.x = -Math.PI / 2;
+  eastWestPath.position.y = 0.012;
+  eastWestPath.receiveShadow = true;
+  root.add(eastWestPath);
+  const northSouthPath = new THREE.Mesh(
+    new THREE.PlaneGeometry(5.2, 43),
+    standardMaterial("#aa9372", { roughness: 1 }),
+  );
+  northSouthPath.rotation.x = -Math.PI / 2;
+  northSouthPath.position.y = 0.016;
+  northSouthPath.receiveShadow = true;
+  root.add(northSouthPath);
+
+  const memoryRing = new THREE.Mesh(
+    new THREE.RingGeometry(7.4, 7.72, 64),
+    standardMaterial("#e8c75d", { emissive: "#806b24", emissiveIntensity: 0.18 }),
+  );
+  memoryRing.rotation.x = -Math.PI / 2;
+  memoryRing.position.y = 0.025;
+  root.add(memoryRing);
+
+  ARENA_BLOCKS.forEach((block) => root.add(createEnvironmentBlock(block)));
+  ARENA_DECORATIONS.forEach((decoration) => root.add(createDecoration(decoration)));
+  return root;
+}
 
 function makeCardTexture(imageUrl: string) {
   const preloaded = getPreloadedArenaImage(imageUrl);
@@ -210,10 +423,14 @@ export default function ArenaGame({
     );
     if (!mount || !initialOpponent) return;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#86c8d4");
-    scene.fog = new THREE.Fog("#86c8d4", 18, 48);
-    const camera = new THREE.PerspectiveCamera(72, 1, 0.05, 90);
-    camera.position.set(initialLocalPlayer.x, PLAYER_HEIGHT, initialLocalPlayer.z);
+    scene.background = new THREE.Color("#8bc9d1");
+    scene.fog = new THREE.Fog("#8bc9d1", 42, 92);
+    const camera = new THREE.PerspectiveCamera(72, 1, 0.05, 130);
+    camera.position.set(
+      initialLocalPlayer.x,
+      initialLocalPlayer.y + PLAYER_HEIGHT,
+      initialLocalPlayer.z,
+    );
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.domElement.className = "arena-world-canvas";
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -221,32 +438,20 @@ export default function ArenaGame({
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     mount.appendChild(renderer.domElement);
 
-    scene.add(new THREE.HemisphereLight("#d9fbff", "#70554a", 2.2));
-    const sun = new THREE.DirectionalLight("#fff0d2", 3.2);
-    sun.position.set(-8, 14, 5);
+    scene.add(new THREE.HemisphereLight("#e4fdff", "#645246", 2.35));
+    const sun = new THREE.DirectionalLight("#fff0d2", 3.4);
+    sun.position.set(-17, 24, 11);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.left = -34;
+    sun.shadow.camera.right = 34;
+    sun.shadow.camera.top = 30;
+    sun.shadow.camera.bottom = -30;
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 70;
     scene.add(sun);
-    const environment: THREE.Mesh[] = [];
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(70, 70),
-      new THREE.MeshStandardMaterial({ color: "#6e7567", roughness: 0.96 }),
-    );
-    ground.rotation.x = -Math.PI / 2;
-    ground.receiveShadow = true;
-    scene.add(ground);
-    environment.push(ground);
-    ARENA_BLOCKS.forEach((block) => {
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(block.width, block.height, block.depth),
-        new THREE.MeshStandardMaterial({ color: block.color, roughness: 0.82, flatShading: true }),
-      );
-      mesh.position.set(block.x, block.y, block.z);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      scene.add(mesh);
-      environment.push(mesh);
-    });
+    const environment = createArenaEnvironment();
+    scene.add(environment);
 
     const opponentModel = createOpponent(initialOpponent.name);
     scene.add(opponentModel.group);
@@ -275,7 +480,12 @@ export default function ArenaGame({
       camera.updateProjectionMatrix();
     };
     resize();
-    const onKeyDown = (event: KeyboardEvent) => keys.add(event.code);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code === "Space" && document.pointerLockElement === renderer.domElement) {
+        event.preventDefault();
+      }
+      keys.add(event.code);
+    };
     const onKeyUp = (event: KeyboardEvent) => keys.delete(event.code);
     const onPointerLock = () => setLocked(document.pointerLockElement === renderer.domElement);
     const onMouseMove = (event: MouseEvent) => {
@@ -310,7 +520,11 @@ export default function ArenaGame({
       const distance = Math.hypot(camera.position.x - local.x, camera.position.z - local.z);
       const follow = distance > 4 ? 1 : 1 - Math.exp(-14 * delta);
       camera.position.x = THREE.MathUtils.lerp(camera.position.x, local.x, follow);
-      camera.position.y = PLAYER_HEIGHT;
+      camera.position.y = THREE.MathUtils.lerp(
+        camera.position.y,
+        local.y + PLAYER_HEIGHT,
+        1 - Math.exp(-18 * delta),
+      );
       camera.position.z = THREE.MathUtils.lerp(camera.position.z, local.z, follow);
       camera.rotation.set(pitch, yaw, 0, "YXZ");
 
@@ -322,6 +536,7 @@ export default function ArenaGame({
           strafe: activeRef.current
             ? Number(keys.has("KeyD")) - Number(keys.has("KeyA"))
             : 0,
+          jump: activeRef.current && keys.has("Space"),
           yaw,
           pitch,
         });
@@ -371,7 +586,7 @@ export default function ArenaGame({
     animate();
 
     return () => {
-      inputHandlerRef.current({ forward: 0, strafe: 0, yaw, pitch });
+      inputHandlerRef.current({ forward: 0, strafe: 0, yaw, pitch, jump: false });
       cancelAnimationFrame(frame);
       observer.disconnect();
       window.removeEventListener("keydown", onKeyDown);
@@ -382,11 +597,7 @@ export default function ArenaGame({
       if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
       projectileVisuals.forEach((visual) => visual.dispose());
       opponentModel.dispose();
-      environment.forEach((mesh) => {
-        mesh.geometry.dispose();
-        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        materials.forEach((material) => material.dispose());
-      });
+      disposeMemoryModel(environment);
       renderer.dispose();
       renderer.domElement.remove();
     };
@@ -420,7 +631,7 @@ export default function ArenaGame({
         <small>MEMORY LOOP</small>
         <strong>{localPlayer.inventoryIndex + 1}<span>/{localPlayer.inventorySize}</span></strong>
       </div>
-      <div className="arena-controls"><span>W A S D</span> move <span>CLICK</span> throw <span>ESC</span> cursor</div>
+      <div className="arena-controls"><span>W A S D</span> move <span>SPACE</span> jump <span>CLICK</span> throw <span>ESC</span> cursor</div>
       {!locked && active ? (
         <button
           className="arena-start"

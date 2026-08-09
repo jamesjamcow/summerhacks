@@ -20,6 +20,7 @@ export type ArenaInputMessage = {
   strafe: number;
   yaw: number;
   pitch: number;
+  jump: boolean;
 };
 
 export function useColyseusArena(roomCode: string, enabled: boolean) {
