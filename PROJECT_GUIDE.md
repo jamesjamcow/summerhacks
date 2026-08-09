@@ -14,9 +14,9 @@ deliberately small but exercises the full stack:
 1. Clerk authenticates the visitor and provides a stable `userId`.
 2. A Server Action writes the user's notes to Neon Postgres.
 3. UploadThing stores uploaded memory files.
-4. UploadThing's completion callback sends each file to Gemini, extracts one
-   key object, asks Gemini for one black folk-art illustration, uploads that
-   generated image to UploadThing, and writes the linked metadata to Neon.
+4. UploadThing's completion callback sends each file to Gemini, receives one
+   validated low-poly model specification for its key object, uploads that JSON
+   artifact to UploadThing, and writes the linked metadata to Neon.
 5. Dashboard queries include the Clerk user ID, so users only read their own
    notes and upload records.
 
@@ -34,7 +34,8 @@ application records and UploadThing metadata.
 | Database | Neon Postgres | Durable application data |
 | Data access | Drizzle ORM + Neon HTTP driver | Typed schema, queries, and SQL migrations |
 | File storage | UploadThing | Upload authorization, transfer, storage, and CDN URLs |
-| Memory processing | Gemini API | One key-object extraction and one image generation per uploaded memory |
+| Memory processing | Gemini API + Three.js | One constrained model specification per memory, rendered as a 3D object in the browser |
+| Realtime arena | Colyseus | Authenticated two-player rooms, authoritative movement, projectiles, hits, rounds, and scores |
 
 Exact installed versions live in `package.json` and `package-lock.json`. Do not
 duplicate version numbers elsewhere unless a compatibility note requires it.
@@ -48,8 +49,8 @@ duplicate version numbers elsewhere unless a compatibility note requires it.
 | `/sign-up/[[...sign-up]]` | Public | Clerk's hosted sign-up component |
 | `/dashboard` | Signed-in users | Notes, uploader, and each user's recent records |
 | `/api/scrapbooks` | Signed-in users | Create a room or join one by its invite code |
-| `/api/scrapbooks/[code]` | Room members | Refresh the authenticated room roster |
-| `/api/arena` | Room members and match participants | Queue, synchronize, hit, and leave an arena match |
+| `/api/scrapbooks/[code]` | Room members | Refresh the authenticated room roster, avatars, and shared inventories |
+| `/api/arena/session` | Room members with an inventory | Issue a short-lived signed ticket and the Colyseus endpoint |
 | `/api/uploadthing` | Public metadata, authenticated uploads | UploadThing GET/POST route handler |
 
 `src/proxy.ts` initializes Clerk's request integration. Authorization lives next
@@ -71,12 +72,15 @@ src/
     page.tsx                      Protected scrapbook entry and Clerk viewer data
   components/upload-panel.tsx    Small client boundary for upload state
   components/book/               Closed cover, setup spread, and scrapbook UI
+  components/arena/              Colyseus client hook and shared-map Three.js renderer
   db/index.ts                     Server-only lazy Neon/Drizzle connection
   db/schema.ts                    Drizzle table definitions
   lib/uploadthing.ts              Typed UploadDropzone factory
+  lib/arena-ticket.ts             Signed short-lived Colyseus room tickets
   proxy.ts                        Clerk request integration
 drizzle/                          Generated, committed SQL migrations
 drizzle.config.ts                 Drizzle Kit configuration
+game-server/                      Independent authoritative Colyseus service
 .env.example                      Required variable names, never real secrets
 ```
 
@@ -99,16 +103,20 @@ be committed.
 | `NEXT_PUBLIC_CLERK_SIGN_IN_FALLBACK_REDIRECT_URL` | Browser-safe | Post-sign-in destination |
 | `NEXT_PUBLIC_CLERK_SIGN_UP_FALLBACK_REDIRECT_URL` | Browser-safe | Post-sign-up destination |
 | `UPLOADTHING_TOKEN` | Server only | Authorizes UploadThing's server SDK |
-| `GEMINI_API_KEY` | Server only | Analyzes each memory and generates its keepsake image |
-| `GEMINI_EXTRACTION_MODEL` | Server only, optional | Overrides the default Gemini key-object extraction model |
-| `GEMINI_IMAGE_MODEL` | Server only, optional | Overrides the default Gemini image-generation model |
+| `GEMINI_API_KEY` | Server only | Analyzes memories, generates 3D model specifications, and creates character images |
+| `COLYSEUS_PUBLIC_URL` | Returned only to authenticated arena clients | Public HTTP/HTTPS address of the Colyseus service |
+| `COLYSEUS_PORT` | Server only | Local port used by the Colyseus process |
+| `ARENA_ALLOWED_ORIGINS` | Server only | Comma-separated web origins accepted by Colyseus matchmaking |
+| `ARENA_TICKET_SECRET` | Server only | Dedicated HMAC secret shared by Next and Colyseus; falls back to `CLERK_SECRET_KEY` locally |
+| `GEMINI_EXTRACTION_MODEL` | Server only, optional | Overrides the Gemini model used for structured memory-model generation |
+| `GEMINI_IMAGE_MODEL` | Server only, optional | Overrides image generation for character avatars only |
 
 Only variables beginning with `NEXT_PUBLIC_` may be referenced by client code.
 Do not rename a secret with that prefix.
 
-Gemini image-generation models do not have free-tier Developer API quota. The
-Google Cloud project behind `GEMINI_API_KEY` must have billing enabled, even if
-the same model can be tried interactively in Google AI Studio.
+The memory-keepsake path uses structured text output rather than Gemini image
+generation. Character avatar creation still uses an image-generation model,
+which may require billing on the Google Cloud project behind `GEMINI_API_KEY`.
 
 ## First-time setup
 
@@ -120,7 +128,7 @@ the same model can be tried interactively in Google AI Studio.
 6. Create a Gemini API key in Google AI Studio.
 7. Run `cp .env.example .env.local` and replace every placeholder.
 8. Run `npm run db:migrate` to apply the committed migrations to Neon.
-9. Run `npm run dev` and open `http://localhost:3000`.
+9. Run `npm run dev`; it starts Next and Colyseus together. Open `http://localhost:3000`.
 10. Sign up, add a note, and upload a small file to exercise all services.
 
 No real cloud resources or credentials are created by this repository. Clerk,
@@ -131,10 +139,14 @@ run end to end.
 
 `notes` contains `id`, `clerk_user_id`, `content`, and `created_at`.
 
-`uploads` contains the authenticated owner's source-file metadata plus processing
-status, the extracted key object, generated-file metadata, failure detail, and
-processing timestamps. A single row is the durable one-to-one link between one
-source memory and its one generated artifact.
+`uploads` contains the authenticated uploader's source-file metadata plus the
+optional scrapbook room and recipient member, processing status, the extracted
+key object, generated-file metadata, failure detail, and processing timestamps.
+A single row is the durable one-to-one link between one source memory and its one
+generated artifact. Dashboard uploads without a room remain personal to their
+uploader. The shared-inventory migration safely assigns existing uploads made by
+members of a single two-person room to the other member; ambiguous legacy rows
+remain personal rather than leaking into unrelated rooms.
 
 `user_avatars` contains the authenticated owner's uploaded selfie metadata plus
 processing status, generated character-avatar file metadata, failure detail, and
@@ -145,9 +157,9 @@ than appending a new record.
 
 `scrapbook_rooms` stores a server-generated invite code and the Clerk ID of its
 creator. `scrapbook_members` records which authenticated users joined each room,
-along with their display metadata. `arena_matches` stores the two participant
-IDs, server-loaded inventory snapshots, authoritative match state, and lifecycle
-status. Room rows cascade to their memberships and matches.
+along with their display metadata. `arena_matches` is retained as a legacy table
+for existing data, but the live arena no longer reads or writes it. Colyseus room
+state is intentionally ephemeral and is disposed when its players leave.
 
 Ownership-sensitive tables index Clerk IDs. Those values deliberately reference Clerk by
 identifier rather than a Postgres foreign key because there is no local users
@@ -181,20 +193,24 @@ For every server mutation or private query:
 1. Call `await auth()` on the server.
 2. Reject or redirect if `userId` is missing.
 3. Derive `clerkUserId` from that authenticated result.
-4. Include `clerkUserId` in every ownership-sensitive `SELECT`, `UPDATE`, or
-   `DELETE` condition.
+4. For personal resources, include `clerkUserId` in every ownership-sensitive
+   `SELECT`, `UPDATE`, or `DELETE` condition. For shared room resources, first
+   verify the authenticated user's membership and then scope the query by the
+   server-derived room ID.
 
 The note Server Action follows this sequence, validates length on the server,
 writes the authenticated `userId`, and revalidates `/dashboard`.
 
 The UploadThing middleware requires a Clerk `userId` before it issues an upload.
-The completion callback uses only the ID returned by that middleware when it
-creates the Neon metadata row. UploadThing's public GET route exposes permitted
-file types and limits, not private user records.
+For scrapbook uploads it also verifies that both the uploader and requested
+recipient belong to the room, then returns server-derived room and recipient IDs
+to the completion callback. UploadThing's public GET route exposes permitted file
+types and limits, not private user records.
 
 ## Upload flow
 
-The browser renders a typed `UploadDropzone` from `src/lib/uploadthing.ts`.
+The browser renders a typed `UploadDropzone` from `src/lib/uploadthing.ts` and
+passes the active room code and selected recipient for scrapbook uploads.
 The `workspaceFile` route accepts batches of up to five total files across these
 supported categories:
 
@@ -205,19 +221,21 @@ supported categories:
 
 UploadThing calls `onUploadComplete` separately for each file. The callback
 persists the source metadata, reads the source bytes, and asks Gemini for one
-lowercase concrete key object. It then makes one independent Gemini image call
-using the project's black-marker folk-art prompt, deliberately keeps only the
-first returned image, uploads that image through UploadThing's server SDK, and
-updates the same Neon row. Five source files therefore produce five independent
-generated-file records and never one collage.
+lowercase concrete key object plus a low-poly model made from an allowlist of
+primitive shapes. The server validates and bounds every name, shape, color,
+position, rotation, scale, and part count before serializing the specification
+as JSON and uploading it through UploadThing. The browser constructs the actual
+Three.js object from that data; AI-authored JavaScript is never executed. Five
+source files therefore produce five independent 3D artifacts.
 
 The client waits for the callback's server data, renders completed artifacts in
-the upload panel immediately, and adds them to the signed-in user's memory chest.
-The root Server Component reloads completed owner-scoped artifacts from Neon, so
-they remain visible after refresh.
+the upload panel immediately, and adds them to the selected recipient's memory
+chest. While a scrapbook is open, its authenticated room endpoint refreshes the
+member roster, avatars, and room-scoped inventories every three seconds, so each
+member sees uploads made by the others.
 
 Current limitation: a source upload can succeed while Gemini or the generated
-UploadThing upload fails. That source row is retained with `processing_status =
+model upload fails. That source row is retained with `processing_status =
 failed` and an internal error string so the failure is visible and retryable.
 Production code may add a retry/reconciliation job. A future deletion feature
 must delete both UploadThing objects and the owner-scoped Neon row.
@@ -254,28 +272,27 @@ the authenticated Clerk user. The client polls the protected room endpoint for
 the durable member roster, so separate accounts and devices see one another in
 the same book.
 
-The arena preloads the signed-in player's completed artifact images before it
-enters that room's queue. The authenticated arena endpoint loads each inventory
-from owner-scoped database records, pairs exactly two ready room members, and is
-authoritative for countdown transitions, first-hit resolution, round scores,
-memory flashes, and forfeits. Clients poll the endpoint for synchronization;
-this works across browser profiles and devices without trusting client-supplied
-user IDs or inventories. The pure match state machine and memory-flash renderer
-remain separate from this transport so a lower-latency realtime layer can
-replace polling later without changing the game rules or visual treatment.
+The arena preloads the signed-in player's completed model specifications (and
+legacy artifact images), then requests a one-minute signed ticket from the
+authenticated session endpoint. That endpoint derives room membership, display
+name, avatar, and the room-scoped inventory from Neon; no client-supplied user ID
+or loadout is trusted. The browser presents the ticket to Colyseus, which matches
+at most two authenticated members by scrapbook code.
 
-UploadThing still authenticates every upload on the server. Room membership
-does not transfer upload ownership: generated artifacts remain attached to the
-authenticated uploader. Attaching a new upload to another room member still
-requires a dedicated recipient field and server-side authorization design.
-
+Both players then inhabit the same map. Clients send only movement intent and
+aim; the Colyseus simulation owns positions, wall collision, projectiles, hit
+detection, countdowns, one-hit rounds, scores, respawns, reconnects, and
+forfeits. Schema patches replace the former HTTP polling and red-dot proxy hits.
+Each projectile uses its owner's equipped memory, and the remote player is a
+live avatar-bearing character at their synchronized transform.
 ## Server and client boundaries
 
 Pages and layouts remain Server Components by default. `upload-panel.tsx` is a
 small Client Component because it needs React state and `router.refresh()`.
 Database queries, secrets, and UploadThing callbacks stay server-side. The
 client imports the upload router only with `import type`, which is erased from
-the browser bundle.
+the browser bundle. Colyseus is a separate long-lived Node process because
+realtime WebSocket rooms do not belong in a Next route handler.
 
 When adding features, keep interactive client boundaries narrow and pass only
 serializable, non-secret props into them.
@@ -304,12 +321,17 @@ npm audit --omit=dev
 An end-to-end smoke test also requires valid provider credentials and a
 migrated Neon database: sign in, create a note, upload a permitted file, refresh
 the dashboard, and verify that another Clerk account cannot see those records.
+For the arena, open the same scrapbook from two Clerk accounts, enter the arena
+from both, verify each sees the other's movement, and confirm only a projectile
+that intersects the remote character scores a round.
 
 ## Deployment
 
-Deploy to a Node-compatible Next.js host such as Vercel. Configure every value
-from `.env.example` in the host's environment settings, run migrations against
-the intended production Neon branch, and add the deployment domain to Clerk and
-UploadThing where their dashboards require allowed origins or redirect URLs.
-Do not use a static export; authentication, Server Actions, database access, and
-the upload route require a server runtime.
+Deploy the web app to a Node-compatible Next.js host and deploy `game-server/`
+as a separate long-lived Node/WebSocket service (or Colyseus Cloud). Run
+`npm run start:arena` for that process, set `COLYSEUS_PUBLIC_URL` on the web app,
+and give both processes the same `ARENA_TICKET_SECRET`. Configure
+`ARENA_ALLOWED_ORIGINS` with the deployed web origin. Run migrations against the
+intended Neon branch and add the deployment domain to Clerk and UploadThing
+where required. Do not use a static export; authentication, Server Actions,
+database access, uploads, and the arena ticket route require a server runtime.

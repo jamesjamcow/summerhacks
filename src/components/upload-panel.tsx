@@ -3,13 +3,18 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { MemoryModelPreview } from "@/components/memory-model-preview";
 import { UploadDropzone } from "@/lib/uploadthing";
 import type { MemoryArtifact } from "@/lib/memory-artifacts";
 
 export function UploadPanel({
   onArtifactsGenerated,
+  recipientUserId,
+  roomCode,
 }: {
   onArtifactsGenerated?: (artifacts: MemoryArtifact[]) => void;
+  recipientUserId?: string;
+  roomCode?: string;
 }) {
   const router = useRouter();
   const [message, setMessage] = useState<string>();
@@ -20,11 +25,15 @@ export function UploadPanel({
     <div>
       <UploadDropzone
         endpoint="workspaceFile"
+        input={{
+          recipientUserId: recipientUserId ?? null,
+          roomCode: roomCode ?? null,
+        }}
         content={{
           label: "Choose memories or drag and drop",
           allowedContent: "Up to 5 images, voice notes, PDFs, or text files",
           button: ({ isUploading }) =>
-            isUploading ? "Making keepsakes…" : "Choose files",
+            isUploading ? "Building 3D keepsakes…" : "Choose files",
         }}
         onChange={(files) => {
           setSelectedCount(files.length);
@@ -32,7 +41,7 @@ export function UploadPanel({
         }}
         onUploadBegin={() => {
           setMessage(
-            `Uploading and illustrating ${selectedCount || 1} ${
+            `Uploading and building ${selectedCount || 1} ${
               (selectedCount || 1) === 1 ? "memory" : "memories"
             }…`,
           );
@@ -60,7 +69,7 @@ export function UploadPanel({
               ? `${completed.length} ${completed.length === 1 ? "keepsake" : "keepsakes"} ready. ${
                   firstFailure?.status === "failed"
                     ? firstFailure.error
-                    : `${failures.length} could not be illustrated.`
+                    : `${failures.length} could not be built.`
                 }`
               : `${completed.length} ${completed.length === 1 ? "keepsake is" : "keepsakes are"} ready.`,
           );
@@ -77,12 +86,22 @@ export function UploadPanel({
         <div className="generated-artifacts" aria-label="Generated keepsakes">
           {artifacts.map((artifact) => (
             <article className="generated-artifact" key={artifact.id}>
-              <div
-                aria-label={`Generated ${artifact.name} illustration`}
-                className="generated-artifact-image"
-                role="img"
-                style={{ backgroundImage: `url(${artifact.artifactImageUrl})` }}
-              />
+              {artifact.artifactModelUrl ? (
+                <MemoryModelPreview
+                  className="generated-artifact-image"
+                  modelUrl={artifact.artifactModelUrl}
+                  name={artifact.name}
+                />
+              ) : (
+                <div
+                  aria-label={`Legacy illustration of ${artifact.name}`}
+                  className="generated-artifact-image legacy-artifact-image"
+                  role="img"
+                  style={artifact.artifactImageUrl
+                    ? { backgroundImage: `url(${artifact.artifactImageUrl})` }
+                    : undefined}
+                />
+              )}
               <div>
                 <span>Memory object</span>
                 <strong>{artifact.name}</strong>

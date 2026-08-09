@@ -1,8 +1,9 @@
 import { auth } from "@clerk/nextjs/server";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { scrapbookMembers, scrapbookRooms } from "@/db/schema";
+import { scrapbookMembers, uploads, userAvatars } from "@/db/schema";
+import { isMemoryModelFileType } from "@/lib/memory-model";
 import { getRoomMembership, normalizeRoomCode } from "@/lib/scrapbook-rooms";
 
 export async function GET(
@@ -32,11 +33,71 @@ export async function GET(
       id: scrapbookMembers.clerkUserId,
       initials: scrapbookMembers.initials,
       name: scrapbookMembers.displayName,
+      avatarUrl: userAvatars.generatedFileUrl,
     })
     .from(scrapbookMembers)
-    .innerJoin(scrapbookRooms, eq(scrapbookMembers.roomId, scrapbookRooms.id))
-    .where(eq(scrapbookRooms.code, code))
+    .leftJoin(
+      userAvatars,
+      and(
+        eq(userAvatars.clerkUserId, scrapbookMembers.clerkUserId),
+        eq(userAvatars.processingStatus, "complete"),
+        isNotNull(userAvatars.generatedFileUrl),
+      ),
+    )
+    .where(eq(scrapbookMembers.roomId, membership.roomId))
     .orderBy(asc(scrapbookMembers.joinedAt));
 
-  return Response.json({ code, members, name: membership.roomName });
+  const memberIds = members.map((member) => member.id);
+  const memberNames = new Map(members.map((member) => [member.id, member.name]));
+  const completedUploads = await db
+    .select({
+      clerkUserId: uploads.clerkUserId,
+      fileName: uploads.fileName,
+      generatedFileUrl: uploads.generatedFileUrl,
+      generatedFileType: uploads.generatedFileType,
+      id: uploads.id,
+      keyObject: uploads.keyObject,
+      recipientClerkUserId: uploads.recipientClerkUserId,
+      roomId: uploads.roomId,
+    })
+    .from(uploads)
+    .where(
+      and(
+        eq(uploads.processingStatus, "complete"),
+        isNotNull(uploads.generatedFileUrl),
+        eq(uploads.roomId, membership.roomId),
+      ),
+    )
+    .orderBy(desc(uploads.createdAt))
+    .limit(200);
+
+  const memberIdSet = new Set(memberIds);
+  const artifacts = completedUploads.flatMap((upload) => {
+    const recipientId = upload.recipientClerkUserId;
+
+    if (
+      !recipientId ||
+      !memberIdSet.has(recipientId) ||
+      !upload.generatedFileUrl ||
+      !upload.keyObject
+    ) {
+      return [];
+    }
+
+    return [{
+      addedBy:
+        upload.clerkUserId === userId
+          ? "You"
+          : memberNames.get(upload.clerkUserId) ?? "A scrapbook member",
+      ...(isMemoryModelFileType(upload.generatedFileType)
+        ? { artifactModelUrl: upload.generatedFileUrl }
+        : { artifactImageUrl: upload.generatedFileUrl }),
+      id: upload.id,
+      name: upload.keyObject,
+      originalMemory: upload.fileName,
+      recipientId,
+    }];
+  });
+
+  return Response.json({ artifacts, code, members, name: membership.roomName });
 }

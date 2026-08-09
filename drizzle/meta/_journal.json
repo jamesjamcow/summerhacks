@@ -29,6 +29,20 @@
       "when": 1786231839071,
       "tag": "0003_lovely_morg",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786233199338,
+      "tag": "0004_lame_jack_power",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786233461349,
+      "tag": "0005_backfill-room-memories",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,9 @@
 export const MEMORY_MODEL_MIME_TYPE = "application/json";
 
+export function isMemoryModelFileType(value: string | null | undefined) {
+  return value?.split(";", 1)[0]?.trim().toLowerCase() === MEMORY_MODEL_MIME_TYPE;
+}
+
 export const MEMORY_MODEL_SHAPES = [
   "box",
   "sphere",

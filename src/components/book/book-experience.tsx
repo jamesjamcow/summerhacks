@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { CharacterPhotoUpload } from "@/components/character-photo-upload";
+import { MemoryModelPreview } from "@/components/memory-model-preview";
 import { UploadPanel } from "@/components/upload-panel";
 import type { MemoryArtifact } from "@/lib/memory-artifacts";
 
@@ -252,10 +253,12 @@ function ClosedBookCover({ opening, onStart }: { opening: boolean; onStart: () =
 }
 
 function MemberCharacter({
+  currentUserId,
   selected,
   viewer,
   onSelect,
 }: {
+  currentUserId: string;
   selected: boolean;
   viewer: Viewer;
   onSelect: () => void;
@@ -290,7 +293,9 @@ function MemberCharacter({
           <span className="chest-lock" />
         </span>
       </div>
-      <span className="member-note">You · memory keeper</span>
+      <span className="member-note">
+        {viewer.id === currentUserId ? "You · memory keeper" : "Scrapbook member"}
+      </span>
       <span className="member-card-action">{selected ? "Viewing profile" : "Open profile"}</span>
     </button>
   );
@@ -299,10 +304,20 @@ function MemberCharacter({
 function InventoryItemCard({ item }: { item: MemoryItem }) {
   return (
     <article className="inventory-item">
-      <div
-        className="inventory-item-art"
-        style={item.artifactImageUrl ? { backgroundImage: `url(${item.artifactImageUrl})` } : undefined}
-      />
+      {item.artifactModelUrl ? (
+        <MemoryModelPreview
+          className="inventory-item-art"
+          modelUrl={item.artifactModelUrl}
+          name={item.name}
+        />
+      ) : (
+        <div
+          aria-label={`Legacy illustration of ${item.name}`}
+          className="inventory-item-art legacy-artifact-image"
+          role="img"
+          style={item.artifactImageUrl ? { backgroundImage: `url(${item.artifactImageUrl})` } : undefined}
+        />
+      )}
       <div>
         <h4>{item.name}</h4>
         {item.ability ? <p>{item.ability}</p> : null}
@@ -315,10 +330,12 @@ function InventoryItemCard({ item }: { item: MemoryItem }) {
 
 function UploadMemoryOverlay({
   recipient,
+  roomCode,
   onArtifactsGenerated,
   onClose,
 }: {
   recipient: Viewer;
+  roomCode: string;
   onArtifactsGenerated: (artifacts: MemoryArtifact[]) => void;
   onClose: () => void;
 }) {
@@ -335,17 +352,21 @@ function UploadMemoryOverlay({
         <header className="overlay-heading">
           <p>For {recipient.name}</p>
           <h2 id="upload-memory-title">Upload a memory</h2>
-          <span>Every file becomes one hand-drawn object for {recipient.name}’s collection.</span>
+          <span>Every file becomes one generated 3D object for {recipient.name}’s collection.</span>
         </header>
 
         <div className="memory-flow-steps" aria-label="Memory upload steps">
           <span className="active"><strong>1</strong> Add memories</span>
-          <span><strong>2</strong> Draw keepsakes</span>
+          <span><strong>2</strong> Build 3D keepsakes</span>
           <span><strong>3</strong> Attach to {recipient.name}</span>
         </div>
 
         <div className="scrapbook-uploader modal-uploader" data-recipient-id={recipient.id}>
-          <UploadPanel onArtifactsGenerated={onArtifactsGenerated} />
+          <UploadPanel
+            onArtifactsGenerated={onArtifactsGenerated}
+            recipientUserId={recipient.id}
+            roomCode={roomCode}
+          />
         </div>
 
         <section className="memory-recipient" aria-labelledby="recipient-title">
@@ -488,11 +509,9 @@ function ArenaOverlay({
 }
 
 function Scrapbook({
-  initialArtifacts,
   session,
   viewer: initialViewer,
 }: {
-  initialArtifacts: MemoryArtifact[];
   session: ScrapbookSession;
   viewer: Viewer;
 }) {
@@ -500,8 +519,11 @@ function Scrapbook({
   const [members, setMembers] = useState<Viewer[]>([initialViewer]);
   const [selectedMemberId, setSelectedMemberId] = useState<string>();
   const [overlay, setOverlay] = useState<ScrapbookOverlay>();
-  const [artifacts, setArtifacts] = useState(initialArtifacts);
+  const [artifacts, setArtifacts] = useState<MemoryArtifact[]>([]);
   const selectedMember = members.find((member) => member.id === selectedMemberId);
+  const viewerArtifacts = artifacts.filter(
+    (artifact) => artifact.recipientId === viewer.id,
+  );
 
   const handleAvatarGenerated = (avatarUrl: string) => {
     setViewer((current) => ({ ...current, avatarUrl }));
@@ -535,11 +557,18 @@ function Scrapbook({
     const syncMembers = async () => {
       try {
         const response = await fetch(`/api/scrapbooks/${encodeURIComponent(session.code)}`, { cache: "no-store" });
-        const result = await response.json() as { members?: Viewer[] };
+        const result = await response.json() as {
+          artifacts?: MemoryArtifact[];
+          members?: Array<Omit<Viewer, "avatarUrl"> & { avatarUrl?: string | null }>;
+        };
         if (response.ok && result.members && !cancelled) {
-          setMembers(result.members.map((member) =>
-            member.id === viewer.id ? { ...member, avatarUrl: viewer.avatarUrl } : member,
-          ));
+          setMembers(result.members.map((member) => ({
+            ...member,
+            avatarUrl:
+              member.avatarUrl ??
+              (member.id === viewer.id ? viewer.avatarUrl : undefined),
+          })));
+          if (result.artifacts) setArtifacts(result.artifacts);
         }
       } catch {
         // Keep the last known member list while the room connection recovers.
@@ -575,6 +604,7 @@ function Scrapbook({
           <div className="scrapbook-members">
             {members.map((member) => (
               <MemberCharacter
+                currentUserId={viewer.id}
                 key={member.id}
                 selected={selectedMemberId === member.id}
                 viewer={member}
@@ -588,7 +618,9 @@ function Scrapbook({
           {selectedMember ? (
             <SelectedMemberProfile
               currentUserId={viewer.id}
-              items={selectedMember.id === viewer.id ? artifacts : []}
+              items={artifacts.filter(
+                (artifact) => artifact.recipientId === selectedMember.id,
+              )}
               member={selectedMember}
               onArena={() => setOverlay("arena")}
               onAvatarGenerated={handleAvatarGenerated}
@@ -635,6 +667,7 @@ function Scrapbook({
         ? createPortal(
             <UploadMemoryOverlay
               recipient={selectedMember}
+              roomCode={session.code}
               onArtifactsGenerated={addArtifacts}
               onClose={() => setOverlay(undefined)}
             />,
@@ -645,7 +678,7 @@ function Scrapbook({
         ? createPortal(
             <ArenaOverlay
               characterImageUrl={viewer.avatarUrl}
-              items={artifacts}
+              items={viewerArtifacts}
               onClose={() => setOverlay(undefined)}
               roomCode={session.code}
               viewer={viewer}
@@ -658,10 +691,8 @@ function Scrapbook({
 }
 
 export function BookExperience({
-  initialArtifacts,
   viewer,
 }: {
-  initialArtifacts: MemoryArtifact[];
   viewer: Viewer;
 }) {
   const [step, setStep] = useState<ExperienceStep>("cover");
@@ -719,7 +750,6 @@ export function BookExperience({
 
       {step === "scrapbook" && session ? (
         <Scrapbook
-          initialArtifacts={initialArtifacts}
           session={session}
           viewer={viewer}
         />

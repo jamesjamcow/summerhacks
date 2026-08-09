@@ -30,6 +30,10 @@ export const uploads = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     clerkUserId: text("clerk_user_id").notNull(),
+    roomId: uuid("room_id").references(() => scrapbookRooms.id, {
+      onDelete: "set null",
+    }),
+    recipientClerkUserId: text("recipient_clerk_user_id"),
     fileKey: text("file_key").notNull().unique(),
     fileName: text("file_name").notNull(),
     fileUrl: text("file_url").notNull(),
@@ -47,7 +51,13 @@ export const uploads = pgTable(
       .defaultNow()
       .notNull(),
   },
-  (table) => [index("uploads_clerk_user_id_idx").on(table.clerkUserId)],
+  (table) => [
+    index("uploads_clerk_user_id_idx").on(table.clerkUserId),
+    index("uploads_room_recipient_idx").on(
+      table.roomId,
+      table.recipientClerkUserId,
+    ),
+  ],
 );
 
 export const userAvatars = pgTable("user_avatars", {

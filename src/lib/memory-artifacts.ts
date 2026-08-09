@@ -1,9 +1,12 @@
 export type MemoryArtifact = {
   id: string;
   name: string;
-  artifactImageUrl: string;
+  artifactModelUrl?: string;
+  /** Legacy image artifacts remain readable after the 3D pipeline migration. */
+  artifactImageUrl?: string;
   originalMemory: string;
   addedBy: string;
+  recipientId: string;
 };
 
 export type MemoryGenerationResult =
