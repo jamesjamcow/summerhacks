@@ -1,5 +1,7 @@
 import { schema, type SchemaType } from "@colyseus/schema";
 
+import type { ArenaMapSpec } from "@/lib/arena-world";
+
 export const ArenaItemState = schema({
   id: "string",
   name: "string",
@@ -13,7 +15,8 @@ export type ArenaItemState = SchemaType<typeof ArenaItemState>;
 export const ArenaPlayerState = schema({
   userId: "string",
   name: "string",
-  avatarUrl: "string",
+  avatarImageUrl: "string",
+  avatarModelUrl: "string",
   x: "float32",
   y: "float32",
   z: "float32",
@@ -41,6 +44,94 @@ export const ArenaProjectileState = schema({
 });
 export type ArenaProjectileState = SchemaType<typeof ArenaProjectileState>;
 
+export const ArenaMapBlockState = schema({
+  x: "float32",
+  y: "float32",
+  z: "float32",
+  width: "float32",
+  height: "float32",
+  depth: "float32",
+  color: "string",
+  style: "string",
+});
+export type ArenaMapBlockState = SchemaType<typeof ArenaMapBlockState>;
+
+export const ArenaMapDecorationState = schema({
+  kind: "string",
+  x: "float32",
+  z: "float32",
+  rotation: "float32",
+  scale: "float32",
+  color: "string",
+});
+export type ArenaMapDecorationState = SchemaType<typeof ArenaMapDecorationState>;
+
+export const ArenaMapLandmarkState = schema({
+  id: "string",
+  name: "string",
+  imageUrl: "string",
+  modelUrl: "string",
+  x: "float32",
+  z: "float32",
+  rotation: "float32",
+  scale: "float32",
+});
+export type ArenaMapLandmarkState = SchemaType<typeof ArenaMapLandmarkState>;
+
+export const ArenaMapState = schema({
+  version: "uint8",
+  themeName: "string",
+  biome: "string",
+  allPhotosOutdoor: "boolean",
+  source: "string",
+  photoCount: "uint8",
+  groundColor: "string",
+  skyColor: "string",
+  fogColor: "string",
+  pathColor: "string",
+  accentColor: "string",
+  blocks: [ArenaMapBlockState],
+  decorations: [ArenaMapDecorationState],
+  landmarks: [ArenaMapLandmarkState],
+});
+export type ArenaMapState = SchemaType<typeof ArenaMapState>;
+
+export function createArenaMapState(map: ArenaMapSpec) {
+  const state = new ArenaMapState({
+    accentColor: map.accentColor,
+    allPhotosOutdoor: map.allPhotosOutdoor,
+    biome: map.biome,
+    fogColor: map.fogColor,
+    groundColor: map.groundColor,
+    pathColor: map.pathColor,
+    photoCount: map.photoCount,
+    skyColor: map.skyColor,
+    source: map.source,
+    themeName: map.themeName,
+    version: map.version,
+  });
+  state.blocks.push(...map.blocks.map((block) => new ArenaMapBlockState(block)));
+  state.decorations.push(...map.decorations.map((decoration) => new ArenaMapDecorationState({
+    color: decoration.color || "",
+    kind: decoration.kind,
+    rotation: decoration.rotation || 0,
+    scale: decoration.scale || 1,
+    x: decoration.x,
+    z: decoration.z,
+  })));
+  state.landmarks.push(...map.landmarks.map((landmark) => new ArenaMapLandmarkState({
+    id: landmark.id,
+    imageUrl: landmark.imageUrl || "",
+    modelUrl: landmark.modelUrl || "",
+    name: landmark.name,
+    rotation: landmark.rotation,
+    scale: landmark.scale,
+    x: landmark.x,
+    z: landmark.z,
+  })));
+  return state;
+}
+
 export const ArenaState = schema({
   roomCode: "string",
   matchId: "string",
@@ -52,6 +143,7 @@ export const ArenaState = schema({
   resultReason: "string",
   resultReceipt: "string",
   impactItem: ArenaItemState,
+  map: ArenaMapState,
   players: { map: ArenaPlayerState, default: new Map() },
   projectiles: { map: ArenaProjectileState, default: new Map() },
 });
@@ -59,6 +151,7 @@ export type ArenaState = SchemaType<typeof ArenaState>;
 
 export type ArenaRealtimePhase =
   | "waiting"
+  | "generating-map"
   | "countdown"
   | "playing"
   | "round-over"
@@ -67,7 +160,8 @@ export type ArenaRealtimePhase =
 export type ArenaPlayerSnapshot = {
   userId: string;
   name: string;
-  avatarUrl: string;
+  avatarImageUrl: string;
+  avatarModelUrl: string;
   x: number;
   y: number;
   z: number;
@@ -111,6 +205,7 @@ export type ArenaRealtimeSnapshot = {
   resultReason: "score" | "forfeit" | "";
   resultReceipt: string;
   impactItem: ArenaPlayerSnapshot["item"];
+  map: ArenaMapSpec;
   players: Record<string, ArenaPlayerSnapshot>;
   projectiles: Record<string, ArenaProjectileSnapshot>;
 };
@@ -125,6 +220,48 @@ export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
     originalImageUrl: item.originalImageUrl,
   });
 
+  const mapSnapshot: ArenaMapSpec = {
+    accentColor: state.map.accentColor,
+    allPhotosOutdoor: state.map.allPhotosOutdoor,
+    biome: state.map.biome as ArenaMapSpec["biome"],
+    blocks: Array.from(state.map.blocks).map((block) => ({
+      color: block.color,
+      depth: block.depth,
+      height: block.height,
+      style: block.style as ArenaMapSpec["blocks"][number]["style"],
+      width: block.width,
+      x: block.x,
+      y: block.y,
+      z: block.z,
+    })),
+    decorations: Array.from(state.map.decorations).map((decoration) => ({
+      ...(decoration.color ? { color: decoration.color } : {}),
+      kind: decoration.kind as ArenaMapSpec["decorations"][number]["kind"],
+      rotation: decoration.rotation,
+      scale: decoration.scale,
+      x: decoration.x,
+      z: decoration.z,
+    })),
+    fogColor: state.map.fogColor,
+    groundColor: state.map.groundColor,
+    landmarks: Array.from(state.map.landmarks).map((landmark) => ({
+      id: landmark.id,
+      ...(landmark.imageUrl ? { imageUrl: landmark.imageUrl } : {}),
+      ...(landmark.modelUrl ? { modelUrl: landmark.modelUrl } : {}),
+      name: landmark.name,
+      rotation: landmark.rotation,
+      scale: landmark.scale,
+      x: landmark.x,
+      z: landmark.z,
+    })),
+    pathColor: state.map.pathColor,
+    photoCount: state.map.photoCount,
+    skyColor: state.map.skyColor,
+    source: state.map.source as ArenaMapSpec["source"],
+    themeName: state.map.themeName,
+    version: 1,
+  };
+
   return {
     roomCode: state.roomCode,
     matchId: state.matchId,
@@ -136,12 +273,14 @@ export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
     resultReason: state.resultReason as ArenaRealtimeSnapshot["resultReason"],
     resultReceipt: state.resultReceipt,
     impactItem: itemSnapshot(state.impactItem),
+    map: mapSnapshot,
     players: Object.fromEntries(Array.from(state.players.entries()).map(([id, player]) => [
       id,
       {
         userId: player.userId,
         name: player.name,
-        avatarUrl: player.avatarUrl,
+        avatarImageUrl: player.avatarImageUrl,
+        avatarModelUrl: player.avatarModelUrl,
         x: player.x,
         y: player.y,
         z: player.z,

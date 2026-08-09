@@ -8,7 +8,7 @@ import { UploadDropzone } from "@/lib/uploadthing";
 export function CharacterPhotoUpload({
   onAvatarGenerated,
 }: {
-  onAvatarGenerated?: (avatarUrl: string) => void;
+  onAvatarGenerated?: (avatarModelUrl: string) => void;
 }) {
   const router = useRouter();
   const [message, setMessage] = useState<string>();
@@ -22,15 +22,15 @@ export function CharacterPhotoUpload({
           label: "Choose a photo of yourself",
           allowedContent: "One image, up to 4MB",
           button: ({ isUploading }) =>
-            isUploading ? "Drawing your character…" : "Choose photo",
+            isUploading ? "Building your 3D avatar…" : "Choose photo",
         }}
-        onUploadBegin={() => setMessage("Uploading and drawing your character…")}
+        onUploadBegin={() => setMessage("Uploading and building your 3D avatar with Gemini…")}
         onClientUploadComplete={(files) => {
           const result = files[0]?.serverData;
 
           if (result?.status === "complete") {
-            setMessage("Your character is ready.");
-            onAvatarGenerated?.(result.avatarImageUrl);
+            setMessage("Your 3D avatar is ready.");
+            onAvatarGenerated?.(result.avatarModelUrl);
           } else if (result?.status === "failed") {
             setMessage(result.error);
           }

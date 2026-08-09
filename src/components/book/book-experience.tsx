@@ -12,12 +12,19 @@ import {
 import { createPortal } from "react-dom";
 
 import { CharacterPhotoUpload } from "@/components/character-photo-upload";
+import { CharacterAvatarPreview } from "@/components/character-avatar-preview";
 import { MemoryModelPreview } from "@/components/memory-model-preview";
 import { UploadPanel } from "@/components/upload-panel";
 import type { MemoryArtifact } from "@/lib/memory-artifacts";
 import type { ScrapbookMatchPage } from "@/lib/scrapbook-pages";
+import {
+  parseTripPortrait,
+  tripPortraitStorageKey,
+  type TripPortrait,
+} from "@/lib/trip-portrait";
 
 import { BOOK_SPREADS, TOTAL_SPREADS } from "./book-content";
+import { PersistentTripPortrait } from "./persistent-trip-portrait";
 
 const BookScene = dynamic(() => import("./book-scene"), {
   ssr: false,
@@ -41,7 +48,8 @@ type Viewer = {
   id: string;
   name: string;
   initials: string;
-  avatarUrl?: string;
+  avatarImageUrl?: string;
+  avatarModelUrl?: string;
 };
 
 type ScrapbookSession = {
@@ -248,12 +256,18 @@ function MemberCharacter({
     >
       <p className="member-name">{viewer.name}</p>
       <div className="member-scene">
-        {viewer.avatarUrl ? (
+        {viewer.avatarModelUrl ? (
+          <CharacterAvatarPreview
+            className="member-avatar-model"
+            modelUrl={viewer.avatarModelUrl}
+            name={viewer.name}
+          />
+        ) : viewer.avatarImageUrl ? (
           <div
-            aria-label={`${viewer.name} character`}
+            aria-label={`${viewer.name} legacy character illustration`}
             className="member-avatar"
             role="img"
-            style={{ backgroundImage: `url(${viewer.avatarUrl})` }}
+            style={{ backgroundImage: `url(${viewer.avatarImageUrl})` }}
           />
         ) : (
           <div className="stick-person" aria-label={`${viewer.name} character placeholder`} role="img">
@@ -316,7 +330,7 @@ function SelectedMemberProfile({
   items: MemoryItem[];
   member: Viewer;
   onArtifactsGenerated: (artifacts: MemoryArtifact[]) => void;
-  onAvatarGenerated: (avatarUrl: string) => void;
+  onAvatarGenerated: (avatarModelUrl: string) => void;
   roomCode: string;
 }) {
   const isCurrentUser = member.id === currentUserId;
@@ -365,8 +379,8 @@ function SelectedMemberProfile({
 
       {isCurrentUser ? (
         <div className="profile-character-action">
-          <h3>{member.avatarUrl ? "Update your character" : "Create your character"}</h3>
-          <p>Upload a photo of yourself and we&apos;ll draw your character for the scrapbook and arena.</p>
+          <h3>{member.avatarModelUrl || member.avatarImageUrl ? "Update your avatar" : "Create your avatar"}</h3>
+          <p>Upload a photo and Gemini will build your 3D avatar for the scrapbook cards and arena.</p>
           <CharacterPhotoUpload onAvatarGenerated={onAvatarGenerated} />
         </div>
       ) : null}
@@ -375,18 +389,18 @@ function SelectedMemberProfile({
 }
 
 function ArenaOverlay({
-  characterImageUrl,
   items,
   onClose,
   onPageCreated,
+  onPortraitCreated,
   onViewPage,
   roomCode,
   viewer,
 }: {
-  characterImageUrl?: string;
   items: MemoryItem[];
   onClose: () => void;
   onPageCreated: (page: ScrapbookMatchPage) => void;
+  onPortraitCreated: (portrait: TripPortrait) => void;
   onViewPage: (pageNumber: number) => void;
   roomCode: string;
   viewer: Viewer;
@@ -414,9 +428,9 @@ function ArenaOverlay({
         <button className="scrapbook-modal-close arena-game-close" onClick={onClose} aria-label="Close arena" type="button">×</button>
         {entranceComplete ? (
           <ArenaMatch
-            characterImageUrl={characterImageUrl}
             items={items}
             onPageCreated={onPageCreated}
+            onPortraitCreated={onPortraitCreated}
             onViewPage={(pageNumber) => {
               onViewPage(pageNumber);
               onClose();
@@ -498,9 +512,11 @@ function MatchScrapbookPage({ page }: { page: ScrapbookMatchPage }) {
 }
 
 function Scrapbook({
+  onPortraitCreated,
   session,
   viewer: initialViewer,
 }: {
+  onPortraitCreated: (portrait: TripPortrait) => void;
   session: ScrapbookSession;
   viewer: Viewer;
 }) {
@@ -517,10 +533,16 @@ function Scrapbook({
     (artifact) => artifact.recipientId === viewer.id,
   );
 
-  const handleAvatarGenerated = (avatarUrl: string) => {
-    setViewer((current) => ({ ...current, avatarUrl }));
+  const handleAvatarGenerated = (avatarModelUrl: string) => {
+    setViewer((current) => ({
+      ...current,
+      avatarImageUrl: undefined,
+      avatarModelUrl,
+    }));
     setMembers((current) => current.map((member) =>
-      member.id === initialViewer.id ? { ...member, avatarUrl } : member,
+      member.id === initialViewer.id
+        ? { ...member, avatarImageUrl: undefined, avatarModelUrl }
+        : member,
     ));
   };
 
@@ -561,15 +583,24 @@ function Scrapbook({
         const response = await fetch(`/api/scrapbooks/${encodeURIComponent(session.code)}`, { cache: "no-store" });
         const result = await response.json() as {
           artifacts?: MemoryArtifact[];
-          members?: Array<Omit<Viewer, "avatarUrl"> & { avatarUrl?: string | null }>;
+          members?: Array<{
+            avatarImageUrl?: string | null;
+            avatarModelUrl?: string | null;
+            id: string;
+            initials: string;
+            name: string;
+          }>;
           pages?: ScrapbookMatchPage[];
         };
         if (response.ok && result.members && !cancelled) {
           setMembers(result.members.map((member) => ({
             ...member,
-            avatarUrl:
-              member.avatarUrl ??
-              (member.id === viewer.id ? viewer.avatarUrl : undefined),
+            avatarImageUrl:
+              member.avatarImageUrl ??
+              (member.id === viewer.id ? viewer.avatarImageUrl : undefined),
+            avatarModelUrl:
+              member.avatarModelUrl ??
+              (member.id === viewer.id ? viewer.avatarModelUrl : undefined),
           })));
           if (result.artifacts) setArtifacts(result.artifacts);
           if (result.pages) {
@@ -591,11 +622,22 @@ function Scrapbook({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [session.code, viewer.avatarUrl, viewer.id]);
+  }, [session.code, viewer.avatarImageUrl, viewer.avatarModelUrl, viewer.id]);
 
   return (
     <section className="scrapbook-stage" aria-label={`${session.name} scrapbook`}>
       <nav className="scrapbook-top-nav" aria-label="Scrapbook navigation">
+        {selectedMember ? (
+          <button
+            aria-label="Back to scrapbook"
+            className="scrapbook-back-button"
+            onClick={() => setSelectedMemberId(undefined)}
+            type="button"
+          >
+            <span aria-hidden="true" className="scrapbook-back-arrow">←</span>
+            <span className="scrapbook-back-label">Back to scrapbook</span>
+          </button>
+        ) : null}
         <button
           onClick={() => setOverlay("arena")}
           type="button"
@@ -681,10 +723,10 @@ function Scrapbook({
       {overlay === "arena"
         ? createPortal(
             <ArenaOverlay
-              characterImageUrl={viewer.avatarUrl}
               items={viewerArtifacts}
               onClose={() => setOverlay(undefined)}
               onPageCreated={addMatchPage}
+              onPortraitCreated={onPortraitCreated}
               onViewPage={(pageNumber) => {
                 setSelectedMemberId(undefined);
                 setSelectedPageNumber(pageNumber);
@@ -711,6 +753,8 @@ export function BookExperience({
   const [session, setSession] = useState<ScrapbookSession>();
   const [spread, setSpread] = useState(OPENING_SPREAD);
   const [dragPreview, setDragPreview] = useState<DragPreview>();
+  const [tripPortrait, setTripPortrait] = useState<TripPortrait>();
+  const [portraitRevealToken, setPortraitRevealToken] = useState(0);
   const openingTimer = useRef<number | undefined>(undefined);
   const dragStart = useRef<
     | {
@@ -723,6 +767,41 @@ export function BookExperience({
   >(undefined);
 
   useEffect(() => () => window.clearTimeout(openingTimer.current), []);
+
+  useEffect(() => {
+    const storageKey = tripPortraitStorageKey(viewer.id);
+    const readStoredPortrait = (serialized: string | null) => {
+      if (!serialized) {
+        setTripPortrait(undefined);
+        return;
+      }
+      try {
+        setTripPortrait(parseTripPortrait(JSON.parse(serialized)));
+      } catch {
+        setTripPortrait(undefined);
+      }
+    };
+
+    readStoredPortrait(window.localStorage.getItem(storageKey));
+    const syncAcrossTabs = (event: StorageEvent) => {
+      if (event.key === storageKey) readStoredPortrait(event.newValue);
+    };
+    window.addEventListener("storage", syncAcrossTabs);
+    return () => window.removeEventListener("storage", syncAcrossTabs);
+  }, [viewer.id]);
+
+  const rememberTripPortrait = useCallback((portrait: TripPortrait) => {
+    setTripPortrait(portrait);
+    setPortraitRevealToken((token) => token + 1);
+    try {
+      window.localStorage.setItem(
+        tripPortraitStorageKey(viewer.id),
+        JSON.stringify(portrait),
+      );
+    } catch {
+      // The portrait remains available for this visit if storage is blocked.
+    }
+  }, [viewer.id]);
 
   const previous = useCallback(() => {
     setSpread((value) => Math.max(0, value - 1));
@@ -948,6 +1027,7 @@ export function BookExperience({
 
       {step === "scrapbook" && session ? (
         <Scrapbook
+          onPortraitCreated={rememberTripPortrait}
           session={session}
           viewer={viewer}
         />
@@ -956,6 +1036,12 @@ export function BookExperience({
       {dialog ? (
         <LobbyDialog mode={dialog} onClose={() => setDialog(undefined)} onComplete={enterScrapbook} />
       ) : null}
+
+      <PersistentTripPortrait
+        key={`${tripPortrait?.matchId ?? "none"}:${portraitRevealToken}`}
+        portrait={tripPortrait}
+        revealToken={portraitRevealToken}
+      />
     </main>
   );
 }

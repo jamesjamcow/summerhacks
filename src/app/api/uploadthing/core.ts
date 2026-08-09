@@ -16,19 +16,13 @@ import { getRoomMembership } from "@/lib/scrapbook-rooms";
 const upload = createUploadthing();
 const uploadThing = new UTApi();
 
-function imageExtension(mimeType: string) {
-  if (mimeType === "image/jpeg") return "jpg";
-  if (mimeType === "image/webp") return "webp";
-  return "png";
-}
-
 function artifactFileName(keyObject: string) {
   const slug = keyObject.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   return `${slug || "memory-artifact"}-${crypto.randomUUID()}.json`;
 }
 
-function avatarFileName(mimeType: string) {
-  return `character-avatar-${crypto.randomUUID()}.${imageExtension(mimeType)}`;
+function avatarFileName() {
+  return `character-avatar-${crypto.randomUUID()}.json`;
 }
 
 function publicGenerationError(error: unknown, kind: "avatar" | "memory") {
@@ -41,6 +35,10 @@ function publicGenerationError(error: unknown, kind: "avatar" | "memory") {
     /quota|billing|resource_exhausted/i.test(error.message)
   ) {
     return "Gemini generation is out of quota for this Google AI project. Check billing or quota, then try again.";
+  }
+
+  if (kind === "avatar" && error instanceof Error && /invalid argument/i.test(error.message)) {
+    return "Gemini rejected the avatar model request before reading the photo. Please try again.";
   }
 
   return kind === "memory"
@@ -240,7 +238,7 @@ export const uploadRouter = {
         });
         const generatedFile = new UTFile(
           [Buffer.from(generated.bytes)],
-          avatarFileName(generated.mimeType),
+          avatarFileName(),
           { type: generated.mimeType },
         );
         const storedAvatar = await uploadThing.uploadFiles(generatedFile);
@@ -271,7 +269,7 @@ export const uploadRouter = {
           processingStatus: "complete",
           generatedFileKey: storedAvatar.data.key,
           generatedFileUrl: storedAvatar.data.ufsUrl,
-          generatedFileType: storedAvatar.data.type,
+          generatedFileType: generated.mimeType,
           generatedFileSize: storedAvatar.data.size,
           generationError: null,
           processedAt: new Date(),
@@ -289,7 +287,7 @@ export const uploadRouter = {
 
         return {
           status: "complete",
-          avatarImageUrl: storedAvatar.data.ufsUrl,
+          avatarModelUrl: storedAvatar.data.ufsUrl,
         } satisfies CharacterGenerationResult;
       } catch (error) {
         const internalMessage =
@@ -309,15 +307,17 @@ export const uploadRouter = {
             console.error("Failed to delete failed character photo upload", { error, key: file.key });
           });
 
-          await getDb()
-            .update(userAvatars)
-            .set({
-              processingStatus: "failed",
-              generationError: internalMessage,
-              processedAt: new Date(),
-              updatedAt: new Date(),
-            })
-            .where(eq(userAvatars.id, existing.id));
+          if (!existing.generatedFileKey) {
+            await getDb()
+              .update(userAvatars)
+              .set({
+                processingStatus: "failed",
+                generationError: internalMessage,
+                processedAt: new Date(),
+                updatedAt: new Date(),
+              })
+              .where(eq(userAvatars.id, existing.id));
+          }
         } else {
           await getDb().insert(userAvatars).values({
             clerkUserId: metadata.userId,

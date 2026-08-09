@@ -4,6 +4,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import { BookExperience } from "@/components/book/book-experience";
 import { getDb } from "@/db";
 import { userAvatars } from "@/db/schema";
+import { isCharacterAvatarFileType } from "@/lib/character-avatar";
 
 export default async function HomePage() {
   await auth.protect();
@@ -29,7 +30,10 @@ export default async function HomePage() {
     .toUpperCase();
 
   const [avatar] = await getDb()
-    .select({ generatedFileUrl: userAvatars.generatedFileUrl })
+    .select({
+      generatedFileType: userAvatars.generatedFileType,
+      generatedFileUrl: userAvatars.generatedFileUrl,
+    })
     .from(userAvatars)
     .where(
       and(
@@ -46,7 +50,9 @@ export default async function HomePage() {
         id: user.id,
         initials,
         name,
-        avatarUrl: avatar?.generatedFileUrl ?? undefined,
+        ...(isCharacterAvatarFileType(avatar?.generatedFileType)
+          ? { avatarModelUrl: avatar?.generatedFileUrl ?? undefined }
+          : { avatarImageUrl: avatar?.generatedFileUrl ?? undefined }),
       }}
     />
   );

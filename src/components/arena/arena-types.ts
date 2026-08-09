@@ -8,7 +8,8 @@ export type ArenaItem = {
 };
 
 export type ArenaPlayer = {
-  avatarUrl?: string;
+  avatarImageUrl?: string;
+  avatarModelUrl?: string;
   id: string;
   inventory: ArenaItem[];
   name: string;

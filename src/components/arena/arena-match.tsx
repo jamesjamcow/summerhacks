@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { MemoryArtifact } from "@/lib/memory-artifacts";
 import type { ArenaPlayerSnapshot } from "@/lib/arena-realtime";
 import type { ScrapbookMatchPage } from "@/lib/scrapbook-pages";
+import { parseTripPortrait, type TripPortrait } from "@/lib/trip-portrait";
 
 import { preloadArenaAssets } from "./arena-assets";
 import ArenaGame from "./arena-game";
@@ -13,10 +14,10 @@ import type { ArenaItem } from "./arena-types";
 import { useColyseusArena } from "./use-colyseus-arena";
 
 type ArenaMatchProps = {
-  characterImageUrl?: string;
   enabled?: boolean;
   items: MemoryArtifact[];
   onPageCreated?: (page: ScrapbookMatchPage) => void;
+  onPortraitCreated?: (portrait: TripPortrait) => void;
   onViewPage?: (pageNumber: number) => void;
   roomCode: string;
   viewer: { id: string; name: string };
@@ -42,6 +43,7 @@ export default function ArenaMatch({
   enabled = true,
   items,
   onPageCreated,
+  onPortraitCreated,
   onViewPage,
   roomCode,
   viewer,
@@ -64,7 +66,11 @@ export default function ArenaMatch({
   const [savedPage, setSavedPage] = useState<ScrapbookMatchPage>();
   const [saveError, setSaveError] = useState<string>();
   const [saveAttempt, setSaveAttempt] = useState(0);
+  const [portraitStatus, setPortraitStatus] = useState<"idle" | "generating" | "ready" | "failed">("idle");
+  const [portraitError, setPortraitError] = useState<string>();
+  const [portraitAttempt, setPortraitAttempt] = useState(0);
   const savingReceipt = useRef<string | undefined>(undefined);
+  const generatingPortrait = useRef<string | undefined>(undefined);
   const realtime = useColyseusArena(
     roomCode,
     enabled && preloadStatus === "ready" && arenaItems.length > 0,
@@ -128,6 +134,65 @@ export default function ArenaMatch({
     });
     return () => { cancelled = true; };
   }, [onPageCreated, realtime.snapshot, saveAttempt, savedPage?.matchId]);
+
+  const completedMatchId = realtime.snapshot?.matchId;
+  const resultReceipt = realtime.snapshot?.resultReceipt;
+  const resultWinnerId = realtime.snapshot?.winnerId;
+  const resultPhase = realtime.snapshot?.phase;
+
+  useEffect(() => {
+    if (
+      resultPhase !== "match-end" ||
+      !resultReceipt ||
+      !completedMatchId ||
+      !savedPage ||
+      savedPage.matchId !== completedMatchId ||
+      resultWinnerId === viewer.id ||
+      generatingPortrait.current === resultReceipt
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    generatingPortrait.current = resultReceipt;
+    setPortraitStatus("generating");
+    setPortraitError(undefined);
+
+    const generatePortrait = async () => {
+      const response = await fetch("/api/arena/portrait", {
+        body: JSON.stringify({ receipt: resultReceipt }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      });
+      const result = await response.json() as { error?: string; portrait?: unknown };
+      const portrait = parseTripPortrait(result.portrait);
+      if (!response.ok || !portrait) {
+        throw new Error(result.error || "Could not assemble the trip portrait.");
+      }
+      if (!cancelled) {
+        setPortraitStatus("ready");
+        onPortraitCreated?.(portrait);
+      }
+    };
+
+    void generatePortrait().catch((reason: unknown) => {
+      if (!cancelled) {
+        generatingPortrait.current = undefined;
+        setPortraitStatus("failed");
+        setPortraitError(reason instanceof Error ? reason.message : "Could not assemble the trip portrait.");
+      }
+    });
+    return () => { cancelled = true; };
+  }, [
+    completedMatchId,
+    onPortraitCreated,
+    portraitAttempt,
+    resultPhase,
+    resultReceipt,
+    resultWinnerId,
+    savedPage,
+    viewer.id,
+  ]);
 
   if (!arenaItems.length) {
     return (
@@ -214,12 +279,23 @@ export default function ArenaMatch({
     );
   }
 
+  if (snapshot.phase === "generating-map") {
+    return (
+      <div className="arena-lobby-state" role="status">
+        <span className="arena-preload-spinner" />
+        <p>Gemini is reading the shared memories</p>
+        <h3>Growing a map from {snapshot.map.photoCount} {snapshot.map.photoCount === 1 ? "photo" : "photos"}…</h3>
+        <small>Both players will enter the same validated, server-owned world.</small>
+      </div>
+    );
+  }
+
   if (snapshot.phase === "countdown") {
     return (
       <div className="arena-countdown" role="status">
         <p>{viewer.name} <span>vs</span> {opponent.name}</p>
         <strong>{countdown || "GO"}</strong>
-        <small>Round {snapshot.round} · first to 3</small>
+        <small>{snapshot.map.themeName} · Round {snapshot.round} · first to 3</small>
       </div>
     );
   }
@@ -264,6 +340,29 @@ export default function ArenaMatch({
           <small className="arena-saving-page" role="status">Binding a new scrapbook page…</small>
         )}
         {saveError ? <small className="arena-save-error" role="alert">{saveError}</small> : null}
+        {!localWon && portraitStatus === "generating" ? (
+          <small className="arena-saving-page" role="status">Gemini is weaving the trip photos into one portrait…</small>
+        ) : null}
+        {!localWon && portraitStatus === "ready" ? (
+          <small className="arena-saving-page" role="status">Your trip portrait is now pinned to the scrapbook.</small>
+        ) : null}
+        {!localWon && portraitStatus === "failed" ? (
+          <>
+            <button
+              className="arena-view-page"
+              onClick={() => {
+                generatingPortrait.current = undefined;
+                setPortraitStatus("idle");
+                setPortraitError(undefined);
+                setPortraitAttempt((attempt) => attempt + 1);
+              }}
+              type="button"
+            >
+              Retry group portrait
+            </button>
+            <small className="arena-save-error" role="alert">{portraitError}</small>
+          </>
+        ) : null}
       </div>
     );
   }
@@ -280,6 +379,7 @@ export default function ArenaMatch({
         active={snapshot.phase === "playing"}
         item={localItem}
         localPlayer={localPlayer}
+        map={snapshot.map}
         onInput={realtime.sendInput}
         onShoot={realtime.shoot}
         players={snapshot.players}

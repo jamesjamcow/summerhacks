@@ -39,6 +39,65 @@ export type ArenaDecoration = {
   color?: string;
 };
 
+export const ARENA_BIOMES = [
+  "grass-field",
+  "forest",
+  "beach",
+  "snowfield",
+  "desert",
+  "city-park",
+  "indoor-hall",
+  "mixed-memory",
+] as const;
+
+export type ArenaBiome = (typeof ARENA_BIOMES)[number];
+export type ArenaMapSource = "generating" | "gemini" | "fallback";
+
+export type ArenaMapLandmark = {
+  id: string;
+  imageUrl?: string;
+  modelUrl?: string;
+  name: string;
+  rotation: number;
+  scale: number;
+  x: number;
+  z: number;
+};
+
+export type ArenaMapSpec = {
+  accentColor: string;
+  allPhotosOutdoor: boolean;
+  biome: ArenaBiome;
+  blocks: ArenaBlock[];
+  decorations: ArenaDecoration[];
+  fogColor: string;
+  groundColor: string;
+  landmarks: ArenaMapLandmark[];
+  pathColor: string;
+  photoCount: number;
+  skyColor: string;
+  source: ArenaMapSource;
+  themeName: string;
+  version: 1;
+};
+
+export type ArenaMapTheme = Pick<
+  ArenaMapSpec,
+  | "accentColor"
+  | "allPhotosOutdoor"
+  | "biome"
+  | "fogColor"
+  | "groundColor"
+  | "pathColor"
+  | "skyColor"
+  | "themeName"
+> & {
+  planterColor: string;
+  stoneColor: string;
+  timberColor: string;
+  wallColor: string;
+};
+
 const mirroredBlocks = (
   blocks: Omit<ArenaBlock, "x">[],
   x: number,
@@ -111,6 +170,94 @@ export const ARENA_DECORATIONS: ArenaDecoration[] = [
   { kind: "rock", x: 23, z: -8, rotation: -0.7, scale: 0.9 },
 ];
 
+/**
+ * Photo objects occupy fixed perimeter plinths. Gemini chooses their order,
+ * while fixed safe positions and bounded scale preserve fair collision lanes.
+ */
+export const ARENA_LANDMARK_SLOTS = [
+  { x: -20.5, z: -24.8, rotation: 0 },
+  { x: -10.5, z: -24.8, rotation: 0 },
+  { x: 0, z: -24.8, rotation: 0 },
+  { x: 10.5, z: -24.8, rotation: 0 },
+  { x: 20.5, z: -24.8, rotation: 0 },
+  { x: -20.5, z: 24.8, rotation: Math.PI },
+  { x: -10.5, z: 24.8, rotation: Math.PI },
+  { x: 0, z: 24.8, rotation: Math.PI },
+  { x: 10.5, z: 24.8, rotation: Math.PI },
+  { x: 20.5, z: 24.8, rotation: Math.PI },
+  { x: -29.2, z: 0, rotation: Math.PI / 2 },
+  { x: 29.2, z: 0, rotation: -Math.PI / 2 },
+] as const;
+
+const FALLBACK_THEME: ArenaMapTheme = {
+  accentColor: "#e8c75d",
+  allPhotosOutdoor: false,
+  biome: "city-park",
+  fogColor: "#8bc9d1",
+  groundColor: "#71806a",
+  pathColor: "#b19a78",
+  planterColor: "#77866e",
+  skyColor: "#8bc9d1",
+  stoneColor: "#617277",
+  themeName: "Garden of Memories",
+  timberColor: "#9a674c",
+  wallColor: "#59635f",
+};
+
+export function createThemedArenaMap(
+  theme: ArenaMapTheme,
+  landmarks: ArenaMapLandmark[] = [],
+  source: ArenaMapSource = "gemini",
+): ArenaMapSpec {
+  const biome = theme.allPhotosOutdoor ? "grass-field" : theme.biome;
+  const groundColor = theme.allPhotosOutdoor ? "#69a85d" : theme.groundColor;
+  const colorForStyle: Record<ArenaBlockStyle, string> = {
+    wall: theme.wallColor,
+    stone: theme.stoneColor,
+    timber: theme.timberColor,
+    planter: theme.planterColor,
+    platform: theme.accentColor,
+    steps: theme.stoneColor,
+  };
+
+  return {
+    accentColor: theme.accentColor,
+    allPhotosOutdoor: theme.allPhotosOutdoor,
+    biome,
+    blocks: ARENA_BLOCKS.map((block) => ({
+      ...block,
+      color: colorForStyle[block.style],
+    })),
+    decorations: ARENA_DECORATIONS
+      .filter((decoration) => !(
+        landmarks.length > 0 &&
+        decoration.kind === "tree" &&
+        Math.abs(decoration.z) > 24 &&
+        Math.abs(decoration.x) < 25
+      ))
+      .map((decoration) => (
+        decoration.kind === "flag"
+          ? { ...decoration, color: theme.accentColor }
+          : { ...decoration }
+      )),
+    fogColor: theme.fogColor,
+    groundColor,
+    landmarks: landmarks.slice(0, ARENA_LANDMARK_SLOTS.length),
+    pathColor: theme.pathColor,
+    photoCount: landmarks.length,
+    skyColor: theme.skyColor,
+    source,
+    themeName: theme.themeName,
+    version: 1,
+  };
+}
+
+export const FALLBACK_ARENA_MAP = createThemedArenaMap(
+  FALLBACK_THEME,
+  [],
+  "fallback",
+);
+
 export const ARENA_SPAWNS = [
   { x: -19, z: 16, yaw: -Math.PI / 2 },
   { x: 19, z: 16, yaw: Math.PI / 2 },
@@ -123,7 +270,12 @@ function overlapsBlockFootprint(x: number, z: number, block: ArenaBlock, padding
     z - padding < block.z + block.depth / 2;
 }
 
-export function isArenaPositionBlocked(x: number, y: number, z: number) {
+export function isArenaPositionBlocked(
+  x: number,
+  y: number,
+  z: number,
+  blocks: Iterable<ArenaBlock> = ARENA_BLOCKS,
+) {
   if (
     x - ARENA_PLAYER_RADIUS < -ARENA_HALF_WIDTH + 0.8 ||
     x + ARENA_PLAYER_RADIUS > ARENA_HALF_WIDTH - 0.8 ||
@@ -133,7 +285,7 @@ export function isArenaPositionBlocked(x: number, y: number, z: number) {
     return true;
   }
 
-  return ARENA_BLOCKS.some((block) => {
+  return Array.from(blocks).some((block) => {
     const blockBottom = block.y - block.height / 2;
     const blockTop = block.y + block.height / 2;
     const overlapsVertically = y < blockTop - 0.05 &&
@@ -143,9 +295,15 @@ export function isArenaPositionBlocked(x: number, y: number, z: number) {
 }
 
 /** Returns the highest surface crossed by a falling player, including ground. */
-export function getArenaLandingHeight(x: number, z: number, fromY: number, toY: number) {
+export function getArenaLandingHeight(
+  x: number,
+  z: number,
+  fromY: number,
+  toY: number,
+  blocks: Iterable<ArenaBlock> = ARENA_BLOCKS,
+) {
   let landingHeight = fromY >= 0 && toY <= 0 ? 0 : -Infinity;
-  ARENA_BLOCKS.forEach((block) => {
+  Array.from(blocks).forEach((block) => {
     const blockTop = block.y + block.height / 2;
     if (
       blockTop <= fromY + 0.04 &&
@@ -158,7 +316,12 @@ export function getArenaLandingHeight(x: number, z: number, fromY: number, toY: 
   return Number.isFinite(landingHeight) ? landingHeight : undefined;
 }
 
-export function isArenaProjectileBlocked(x: number, y: number, z: number) {
+export function isArenaProjectileBlocked(
+  x: number,
+  y: number,
+  z: number,
+  blocks: Iterable<ArenaBlock> = ARENA_BLOCKS,
+) {
   if (
     y <= 0 ||
     x < -ARENA_HALF_WIDTH + 0.7 ||
@@ -167,7 +330,7 @@ export function isArenaProjectileBlocked(x: number, y: number, z: number) {
     z > ARENA_HALF_DEPTH - 0.7
   ) return true;
 
-  return ARENA_BLOCKS.some((block) =>
+  return Array.from(blocks).some((block) =>
     x >= block.x - block.width / 2 &&
     x <= block.x + block.width / 2 &&
     y >= block.y - block.height / 2 &&

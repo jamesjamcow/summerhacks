@@ -3,6 +3,7 @@ import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { scrapbookMatchPages, scrapbookMembers, uploads, userAvatars } from "@/db/schema";
+import { isCharacterAvatarFileType } from "@/lib/character-avatar";
 import { isMemoryModelFileType } from "@/lib/memory-model";
 import { getRoomMembership, normalizeRoomCode } from "@/lib/scrapbook-rooms";
 import type { ScrapbookMatchPage } from "@/lib/scrapbook-pages";
@@ -29,12 +30,13 @@ export async function GET(
       ),
     );
 
-  const members = await db
+  const storedMembers = await db
     .select({
       id: scrapbookMembers.clerkUserId,
       initials: scrapbookMembers.initials,
       name: scrapbookMembers.displayName,
-      avatarUrl: userAvatars.generatedFileUrl,
+      avatarFileType: userAvatars.generatedFileType,
+      avatarFileUrl: userAvatars.generatedFileUrl,
     })
     .from(scrapbookMembers)
     .leftJoin(
@@ -47,6 +49,13 @@ export async function GET(
     )
     .where(eq(scrapbookMembers.roomId, membership.roomId))
     .orderBy(asc(scrapbookMembers.joinedAt));
+
+  const members = storedMembers.map(({ avatarFileType, avatarFileUrl, ...member }) => ({
+    ...member,
+    ...(isCharacterAvatarFileType(avatarFileType)
+      ? { avatarModelUrl: avatarFileUrl }
+      : { avatarImageUrl: avatarFileUrl }),
+  }));
 
   const memberIds = members.map((member) => member.id);
   const memberNames = new Map(members.map((member) => [member.id, member.name]));

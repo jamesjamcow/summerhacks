@@ -58,7 +58,10 @@ function color(value: unknown) {
     : null;
 }
 
-export function parseMemoryModelSpec(value: unknown): MemoryModelSpec {
+export function parseMemoryModelSpec(
+  value: unknown,
+  limits: { maximumParts?: number; minimumParts?: number } = {},
+): MemoryModelSpec {
   if (!value || typeof value !== "object") {
     throw new Error("The generated model is not a JSON object.");
   }
@@ -66,11 +69,13 @@ export function parseMemoryModelSpec(value: unknown): MemoryModelSpec {
   const candidate = value as Record<string, unknown>;
   const name = typeof candidate.name === "string" ? candidate.name.trim().slice(0, 80) : "";
   if (!name) throw new Error("The generated model has no name.");
-  if (!Array.isArray(candidate.parts) || candidate.parts.length < 1) {
+  const minimumParts = limits.minimumParts ?? 1;
+  const maximumParts = limits.maximumParts ?? 16;
+  if (!Array.isArray(candidate.parts) || candidate.parts.length < minimumParts) {
     throw new Error("The generated model has no parts.");
   }
 
-  const parts = candidate.parts.slice(0, 16).map((value, index) => {
+  const parts = candidate.parts.slice(0, maximumParts).map((value, index) => {
     if (!value || typeof value !== "object") {
       throw new Error(`Model part ${index + 1} is invalid.`);
     }

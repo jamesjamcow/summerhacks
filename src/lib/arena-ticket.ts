@@ -13,7 +13,8 @@ export type ArenaTicketPayload = {
   version: 1;
   userId: string;
   name: string;
-  avatarUrl?: string;
+  avatarImageUrl?: string;
+  avatarModelUrl?: string;
   roomCode: string;
   roomId: string;
   inventory: ArenaTicketItem[];
@@ -58,7 +59,8 @@ function isTicketPayload(value: unknown): value is ArenaTicketPayload {
   return payload.version === 1 &&
     text(payload.userId, 128) &&
     text(payload.name, 100) &&
-    (payload.avatarUrl === undefined || text(payload.avatarUrl, 2_048)) &&
+    (payload.avatarImageUrl === undefined || text(payload.avatarImageUrl, 2_048)) &&
+    (payload.avatarModelUrl === undefined || text(payload.avatarModelUrl, 2_048)) &&
     typeof payload.roomCode === "string" && /^[A-Z0-9]{1,8}$/.test(payload.roomCode) &&
     text(payload.roomId, 64) &&
     Array.isArray(payload.inventory) &&

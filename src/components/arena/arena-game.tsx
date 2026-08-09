@@ -3,19 +3,25 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
+import { CharacterAvatarPreview } from "@/components/character-avatar-preview";
 import { MemoryModelPreview } from "@/components/memory-model-preview";
 import type {
   ArenaPlayerSnapshot,
   ArenaProjectileSnapshot,
 } from "@/lib/arena-realtime";
 import {
-  ARENA_BLOCKS,
-  ARENA_DECORATIONS,
   ARENA_GROUND_DEPTH,
   ARENA_GROUND_WIDTH,
+  type ArenaBiome,
   type ArenaBlock,
   type ArenaDecoration,
+  type ArenaMapLandmark,
+  type ArenaMapSpec,
 } from "@/lib/arena-world";
+import {
+  fetchCharacterAvatarSpec,
+  type CharacterAvatarSpec,
+} from "@/lib/character-avatar";
 import { createMemoryModel, disposeMemoryModel } from "@/lib/three-memory-model";
 
 import {
@@ -30,6 +36,7 @@ type ArenaGameProps = {
   active: boolean;
   item: ArenaItem;
   localPlayer: ArenaPlayerSnapshot;
+  map: ArenaMapSpec;
   onInput: (input: ArenaInputMessage) => void;
   onShoot: () => void;
   players: Record<string, ArenaPlayerSnapshot>;
@@ -125,9 +132,21 @@ function createEnvironmentBlock(block: ArenaBlock) {
   return group;
 }
 
-function createDecoration(decoration: ArenaDecoration) {
+function biomeFoliage(biome: ArenaBiome) {
+  switch (biome) {
+    case "snowfield": return ["#e9f3ec", "#c8dcd1", "#8ba89b"] as const;
+    case "desert": return ["#87934f", "#a7a45d", "#c8ad69"] as const;
+    case "beach": return ["#3f9568", "#55aa72", "#a7bd69"] as const;
+    case "indoor-hall": return ["#64746f", "#7d8c82", "#a0a58b"] as const;
+    case "forest": return ["#2f6247", "#3f7452", "#56865e"] as const;
+    default: return ["#47745b", "#588364", "#718957"] as const;
+  }
+}
+
+function createDecoration(decoration: ArenaDecoration, biome: ArenaBiome) {
   const group = new THREE.Group();
   const scale = decoration.scale ?? 1;
+  const foliage = biomeFoliage(biome);
   group.position.set(decoration.x, 0, decoration.z);
   group.rotation.y = decoration.rotation ?? 0;
   group.scale.setScalar(scale);
@@ -146,7 +165,7 @@ function createDecoration(decoration: ArenaDecoration) {
     ].forEach(([x, y, z, radius], index) => {
       const crown = shadowed(new THREE.Mesh(
         new THREE.DodecahedronGeometry(radius, 0),
-        standardMaterial(index === 1 ? "#47745b" : "#588364"),
+        standardMaterial(index === 1 ? foliage[0] : foliage[1]),
       ));
       crown.position.set(x, y, z);
       group.add(crown);
@@ -201,7 +220,7 @@ function createDecoration(decoration: ArenaDecoration) {
       const bladeHeight = 0.72 + (index % 2) * 0.18;
       const blade = shadowed(new THREE.Mesh(
         new THREE.ConeGeometry(0.09, bladeHeight, 4),
-        standardMaterial(index % 2 ? "#718957" : "#8b9b63"),
+        standardMaterial(index % 2 ? foliage[2] : foliage[1]),
       ), false);
       blade.position.set((index - 2) * 0.13, bladeHeight / 2, (index % 2) * 0.1);
       blade.rotation.z = (index - 2) * 0.1;
@@ -212,17 +231,17 @@ function createDecoration(decoration: ArenaDecoration) {
   return group;
 }
 
-function createArenaEnvironment() {
+function createArenaEnvironment(map: ArenaMapSpec) {
   const root = new THREE.Group();
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(ARENA_GROUND_WIDTH, ARENA_GROUND_DEPTH),
-    standardMaterial("#71806a", { roughness: 0.98 }),
+    standardMaterial(map.groundColor, { roughness: 0.98 }),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   root.add(ground);
 
-  const pathMaterial = standardMaterial("#b19a78", { roughness: 1 });
+  const pathMaterial = standardMaterial(map.pathColor, { roughness: 1 });
   const eastWestPath = new THREE.Mesh(new THREE.PlaneGeometry(51, 5.2), pathMaterial);
   eastWestPath.rotation.x = -Math.PI / 2;
   eastWestPath.position.y = 0.012;
@@ -230,7 +249,7 @@ function createArenaEnvironment() {
   root.add(eastWestPath);
   const northSouthPath = new THREE.Mesh(
     new THREE.PlaneGeometry(5.2, 43),
-    standardMaterial("#aa9372", { roughness: 1 }),
+    standardMaterial(new THREE.Color(map.pathColor).multiplyScalar(0.94).getStyle(), { roughness: 1 }),
   );
   northSouthPath.rotation.x = -Math.PI / 2;
   northSouthPath.position.y = 0.016;
@@ -239,15 +258,56 @@ function createArenaEnvironment() {
 
   const memoryRing = new THREE.Mesh(
     new THREE.RingGeometry(7.4, 7.72, 64),
-    standardMaterial("#e8c75d", { emissive: "#806b24", emissiveIntensity: 0.18 }),
+    standardMaterial(map.accentColor, { emissive: map.accentColor, emissiveIntensity: 0.18 }),
   );
   memoryRing.rotation.x = -Math.PI / 2;
   memoryRing.position.y = 0.025;
   root.add(memoryRing);
 
-  ARENA_BLOCKS.forEach((block) => root.add(createEnvironmentBlock(block)));
-  ARENA_DECORATIONS.forEach((decoration) => root.add(createDecoration(decoration)));
+  map.blocks.forEach((block) => root.add(createEnvironmentBlock(block)));
+  map.decorations.forEach((decoration) => root.add(createDecoration(decoration, map.biome)));
   return root;
+}
+
+function createArenaLandmark(landmark: ArenaMapLandmark, accentColor: string) {
+  const group = new THREE.Group();
+  group.position.set(landmark.x, 0, landmark.z);
+  group.rotation.y = landmark.rotation;
+
+  const plinth = shadowed(new THREE.Mesh(
+    new THREE.CylinderGeometry(1.35, 1.55, 0.55, 10),
+    standardMaterial(accentColor, { roughness: 0.9 }),
+  ));
+  plinth.position.y = 0.275;
+  group.add(plinth);
+
+  let texture: THREE.Texture | undefined;
+  if (landmark.modelUrl) {
+    const spec = getPreloadedArenaModel(landmark.modelUrl);
+    if (!spec) return undefined;
+    const model = createMemoryModel(spec, 2.8 * landmark.scale);
+    model.position.y = 0.55;
+    group.add(model);
+  } else if (landmark.imageUrl) {
+    texture = makeCardTexture(landmark.imageUrl);
+    if (!texture) return undefined;
+    const card = shadowed(new THREE.Mesh(
+      new THREE.PlaneGeometry(2.5 * landmark.scale, 2.5 * landmark.scale),
+      new THREE.MeshStandardMaterial({ map: texture, roughness: 0.82, side: THREE.DoubleSide }),
+    ));
+    card.position.y = 1.9;
+    group.add(card);
+  } else {
+    return undefined;
+  }
+
+  return {
+    dispose: () => {
+      disposeMemoryModel(group);
+      texture?.dispose();
+    },
+    group,
+  };
 }
 
 function makeCardTexture(imageUrl: string) {
@@ -281,32 +341,36 @@ function makeOpponentLabel(name: string) {
   return texture;
 }
 
-function createOpponent(name: string) {
+function createOpponent(name: string, avatarSpec?: CharacterAvatarSpec) {
   const group = new THREE.Group();
-  const dark = new THREE.MeshStandardMaterial({ color: "#27234e", flatShading: true });
-  const skin = new THREE.MeshStandardMaterial({ color: "#ffb47a", flatShading: true });
-  const accent = new THREE.MeshStandardMaterial({ color: "#49ccd1", flatShading: true });
-  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.75, 5, 10), dark);
-  body.position.y = 1.05;
-  body.castShadow = true;
-  group.add(body);
-  const head = new THREE.Mesh(new THREE.DodecahedronGeometry(0.38, 0), skin);
-  head.position.y = 2.05;
-  head.castShadow = true;
-  group.add(head);
+  if (avatarSpec) {
+    group.add(createMemoryModel(avatarSpec, 2.35));
+  } else {
+    const dark = new THREE.MeshStandardMaterial({ color: "#27234e", flatShading: true });
+    const skin = new THREE.MeshStandardMaterial({ color: "#ffb47a", flatShading: true });
+    const accent = new THREE.MeshStandardMaterial({ color: "#49ccd1", flatShading: true });
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.42, 0.75, 5, 10), dark);
+    body.position.y = 1.05;
+    body.castShadow = true;
+    group.add(body);
+    const head = new THREE.Mesh(new THREE.DodecahedronGeometry(0.38, 0), skin);
+    head.position.y = 2.05;
+    head.castShadow = true;
+    group.add(head);
 
-  [-1, 1].forEach((side) => {
-    const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.62, 4, 8), accent);
-    arm.position.set(side * 0.58, 1.18, 0);
-    arm.rotation.z = side * -0.22;
-    arm.castShadow = true;
-    group.add(arm);
-    const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.14, 0.72, 4, 8), dark);
-    leg.position.set(side * 0.23, 0.25, 0);
-    leg.rotation.z = side * 0.08;
-    leg.castShadow = true;
-    group.add(leg);
-  });
+    [-1, 1].forEach((side) => {
+      const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.12, 0.62, 4, 8), accent);
+      arm.position.set(side * 0.58, 1.18, 0);
+      arm.rotation.z = side * -0.22;
+      arm.castShadow = true;
+      group.add(arm);
+      const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.14, 0.72, 4, 8), dark);
+      leg.position.set(side * 0.23, 0.25, 0);
+      leg.rotation.z = side * 0.08;
+      leg.castShadow = true;
+      group.add(leg);
+    });
+  }
 
   const labelTexture = makeOpponentLabel(name);
   const labelMaterial = new THREE.SpriteMaterial({
@@ -376,6 +440,7 @@ export default function ArenaGame({
   active,
   item,
   localPlayer,
+  map,
   onInput,
   onShoot,
   players,
@@ -391,6 +456,7 @@ export default function ArenaGame({
   const previousHealthRef = useRef(localPlayer.health);
   const [locked, setLocked] = useState(false);
   const [hitFlash, setHitFlash] = useState(false);
+  const mapKey = `${map.source}:${map.themeName}:${map.landmarks.map((landmark) => landmark.id).join(",")}`;
 
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { inputHandlerRef.current = onInput; }, [onInput]);
@@ -423,8 +489,8 @@ export default function ArenaGame({
     );
     if (!mount || !initialOpponent) return;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#8bc9d1");
-    scene.fog = new THREE.Fog("#8bc9d1", 42, 92);
+    scene.background = new THREE.Color(map.skyColor);
+    scene.fog = new THREE.Fog(map.fogColor, 42, 92);
     const camera = new THREE.PerspectiveCamera(72, 1, 0.05, 130);
     camera.position.set(
       initialLocalPlayer.x,
@@ -450,11 +516,46 @@ export default function ArenaGame({
     sun.shadow.camera.near = 1;
     sun.shadow.camera.far = 70;
     scene.add(sun);
-    const environment = createArenaEnvironment();
+    const environment = createArenaEnvironment(map);
     scene.add(environment);
+    const landmarkVisuals: Array<{ dispose: () => void; group: THREE.Group }> = [];
+    let disposed = false;
+    const landmarkItems = map.landmarks.map<ArenaItem>((landmark) => ({
+      id: landmark.id,
+      imageUrl: landmark.imageUrl,
+      memoryLabel: landmark.name,
+      modelUrl: landmark.modelUrl,
+      name: landmark.name,
+    }));
+    void preloadArenaAssets(landmarkItems).then(() => {
+      if (disposed) return;
+      map.landmarks.forEach((landmark) => {
+        const visual = createArenaLandmark(landmark, map.accentColor);
+        if (!visual) return;
+        landmarkVisuals.push(visual);
+        scene.add(visual.group);
+      });
+    }).catch(() => undefined);
 
-    const opponentModel = createOpponent(initialOpponent.name);
+    let opponentModel = createOpponent(initialOpponent.name);
     scene.add(opponentModel.group);
+    if (initialOpponent.avatarModelUrl) {
+      void fetchCharacterAvatarSpec(initialOpponent.avatarModelUrl)
+        .then((spec) => {
+          if (disposed) return;
+          const nextOpponent = createOpponent(initialOpponent.name, spec);
+          nextOpponent.group.position.copy(opponentModel.group.position);
+          nextOpponent.group.rotation.copy(opponentModel.group.rotation);
+          nextOpponent.group.visible = opponentModel.group.visible;
+          scene.remove(opponentModel.group);
+          opponentModel.dispose();
+          opponentModel = nextOpponent;
+          scene.add(opponentModel.group);
+        })
+        .catch((error) => {
+          console.warn("Arena avatar could not be loaded", error);
+        });
+    }
     const projectileVisuals = new Map<string, ProjectileVisual>();
     const requestedProjectileAssets = new Set<string>();
     const requestProjectileAsset = (projectileItem: ArenaProjectileSnapshot["item"]) => {
@@ -586,6 +687,7 @@ export default function ArenaGame({
     animate();
 
     return () => {
+      disposed = true;
       inputHandlerRef.current({ forward: 0, strafe: 0, yaw, pitch, jump: false });
       cancelAnimationFrame(frame);
       observer.disconnect();
@@ -596,20 +698,32 @@ export default function ArenaGame({
       renderer.domElement.removeEventListener("mousedown", throwMemory);
       if (document.pointerLockElement === renderer.domElement) document.exitPointerLock();
       projectileVisuals.forEach((visual) => visual.dispose());
+      landmarkVisuals.forEach((visual) => {
+        scene.remove(visual.group);
+        visual.dispose();
+      });
       opponentModel.dispose();
       disposeMemoryModel(environment);
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [localPlayer.userId, opponent?.name, opponent?.userId]);
+  // mapKey is deliberately stable across high-frequency Colyseus snapshots.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localPlayer.userId, mapKey, opponent?.avatarModelUrl, opponent?.name, opponent?.userId]);
 
   return (
     <div className={hitFlash ? "arena-game is-hit" : "arena-game"} ref={mountRef}>
-      {localPlayer.avatarUrl ? (
+      {localPlayer.avatarModelUrl ? (
+        <CharacterAvatarPreview
+          className="arena-player-avatar-model"
+          modelUrl={localPlayer.avatarModelUrl}
+          name={localPlayer.name}
+        />
+      ) : localPlayer.avatarImageUrl ? (
         <div
           className="arena-player-avatar"
           aria-hidden="true"
-          style={{ backgroundImage: `url(${localPlayer.avatarUrl})` }}
+          style={{ backgroundImage: `url(${localPlayer.avatarImageUrl})` }}
         />
       ) : null}
       <div className="arena-feed">

@@ -11,6 +11,7 @@ import {
   ArenaPlayerState,
   ArenaProjectileState,
   ArenaState,
+  createArenaMapState,
 } from "../../src/lib/arena-realtime";
 import {
   type ArenaTicketItem,
@@ -27,10 +28,13 @@ import {
   ARENA_PROJECTILE_SPEED,
   ARENA_ROUNDS_TO_WIN,
   ARENA_SPAWNS,
+  FALLBACK_ARENA_MAP,
   getArenaLandingHeight,
   isArenaPositionBlocked,
   isArenaProjectileBlocked,
+  type ArenaMapSpec,
 } from "../../src/lib/arena-world";
+import { generateArenaMap } from "../arena-map-generator";
 
 type ArenaInput = {
   forward: number;
@@ -128,6 +132,7 @@ export class ArenaRoom extends Room<{
   state = new ArenaState({
     eliminatedPlayerId: "",
     impactItem: emptyStateItem(),
+    map: createArenaMapState(FALLBACK_ARENA_MAP),
     matchId: "",
     phase: "waiting",
     phaseEndsAt: 0,
@@ -144,6 +149,7 @@ export class ArenaRoom extends Room<{
   private readonly lastShotAt = new Map<string, number>();
   private readonly motionByUser = new Map<string, PlayerMotionRuntime>();
   private readonly projectileRuntime = new Map<string, ProjectileRuntime>();
+  private world: ArenaMapSpec = FALLBACK_ARENA_MAP;
 
   static async onAuth(token: string, options: unknown) {
     try {
@@ -188,7 +194,8 @@ export class ArenaRoom extends Room<{
     const spawnIndex = this.state.players.size % ARENA_SPAWNS.length;
     const spawn = ARENA_SPAWNS[spawnIndex];
     const player = new ArenaPlayerState({
-      avatarUrl: ticket.avatarUrl || "",
+      avatarImageUrl: ticket.avatarImageUrl || "",
+      avatarModelUrl: ticket.avatarModelUrl || "",
       connected: true,
       health: 100,
       inventoryIndex: 0,
@@ -217,7 +224,7 @@ export class ArenaRoom extends Room<{
     this.state.players.set(ticket.userId, player);
     this.equipPlayer(player);
 
-    if (this.state.players.size === 2) this.startCountdown();
+    if (this.state.players.size === 2) void this.prepareMatch();
   }
 
   async onDrop(client: ArenaRoomClient) {
@@ -356,8 +363,8 @@ export class ArenaRoom extends Room<{
     const distance = ARENA_MOVE_SPEED * delta;
     const dx = (-Math.sin(input.yaw) * forward + Math.cos(input.yaw) * strafe) * distance;
     const dz = (-Math.cos(input.yaw) * forward - Math.sin(input.yaw) * strafe) * distance;
-    if (!isArenaPositionBlocked(player.x + dx, player.y, player.z)) player.x += dx;
-    if (!isArenaPositionBlocked(player.x, player.y, player.z + dz)) player.z += dz;
+    if (!isArenaPositionBlocked(player.x + dx, player.y, player.z, this.world.blocks)) player.x += dx;
+    if (!isArenaPositionBlocked(player.x, player.y, player.z + dz, this.world.blocks)) player.z += dz;
 
     if (motion.grounded) {
       const support = getArenaLandingHeight(
@@ -365,6 +372,7 @@ export class ArenaRoom extends Room<{
         player.z,
         player.y + 0.06,
         player.y - 0.06,
+        this.world.blocks,
       );
       if (support === undefined || Math.abs(support - player.y) > 0.08) {
         motion.grounded = false;
@@ -375,7 +383,7 @@ export class ArenaRoom extends Room<{
       motion.verticalVelocity -= ARENA_GRAVITY * delta;
       const nextY = player.y + motion.verticalVelocity * delta;
       const landingHeight = motion.verticalVelocity <= 0
-        ? getArenaLandingHeight(player.x, player.z, player.y, nextY)
+        ? getArenaLandingHeight(player.x, player.z, player.y, nextY, this.world.blocks)
         : undefined;
       if (landingHeight !== undefined) {
         player.y = landingHeight;
@@ -424,7 +432,7 @@ export class ArenaRoom extends Room<{
 
     if (
       now >= runtime.expiresAt ||
-      isArenaProjectileBlocked(projectile.x, projectile.y, projectile.z)
+      isArenaProjectileBlocked(projectile.x, projectile.y, projectile.z, this.world.blocks)
     ) {
       this.removeProjectile(projectile.id);
     }
@@ -475,6 +483,35 @@ export class ArenaRoom extends Room<{
     this.clearProjectiles();
     this.state.phase = "round-over";
     this.state.phaseEndsAt = now + ROUND_BREAK_MS;
+  }
+
+  private async prepareMatch() {
+    const inventories = Array.from(this.inventoryByUser.values());
+    const photoCount = new Set(inventories.flat().flatMap((item) =>
+      item.originalImageUrl ? [item.id] : []
+    )).size;
+    this.state.map = createArenaMapState({
+      ...FALLBACK_ARENA_MAP,
+      photoCount,
+      source: "generating",
+    });
+    this.state.phase = "generating-map";
+    this.state.phaseEndsAt = 0;
+
+    let map = FALLBACK_ARENA_MAP;
+    try {
+      map = await generateArenaMap(inventories) || FALLBACK_ARENA_MAP;
+    } catch (error) {
+      console.error("Gemini arena map generation failed; using the balanced fallback map", error);
+    }
+    if (
+      this.state.phase !== "generating-map" ||
+      Array.from(this.state.players.values()).filter((player) => player.connected).length !== 2
+    ) return;
+
+    this.world = map;
+    this.state.map = createArenaMapState(map);
+    this.startCountdown();
   }
 
   private startCountdown() {

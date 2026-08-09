@@ -5,6 +5,7 @@ import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { scrapbookMembers, uploads, userAvatars } from "@/db/schema";
 import type { ArenaTicketItem } from "@/lib/arena-ticket";
+import { isCharacterAvatarFileType } from "@/lib/character-avatar";
 import { isMemoryModelFileType } from "@/lib/memory-model";
 import { getRoomMembership } from "@/lib/scrapbook-rooms";
 
@@ -23,7 +24,10 @@ export async function loadArenaSession(roomCode: string, userId: string) {
       ))
       .limit(1),
     db
-      .select({ url: userAvatars.generatedFileUrl })
+      .select({
+        type: userAvatars.generatedFileType,
+        url: userAvatars.generatedFileUrl,
+      })
       .from(userAvatars)
       .where(and(
         eq(userAvatars.clerkUserId, userId),
@@ -72,7 +76,9 @@ export async function loadArenaSession(roomCode: string, userId: string) {
   if (!items.length) throw new Error("INVENTORY_REQUIRED");
 
   return {
-    avatarUrl: avatar?.url ?? undefined,
+    ...(isCharacterAvatarFileType(avatar?.type)
+      ? { avatarModelUrl: avatar?.url ?? undefined }
+      : { avatarImageUrl: avatar?.url ?? undefined }),
     inventory: items,
     name: member.name,
     roomCode: roomCode.trim().toUpperCase(),
