@@ -1,11 +1,13 @@
 export type ArenaItem = {
   id: string;
-  imageUrl: string;
+  modelUrl?: string;
+  imageUrl?: string;
   memoryLabel: string;
   name: string;
 };
 
 export type ArenaPlayer = {
+  avatarUrl?: string;
   id: string;
   inventory: ArenaItem[];
   name: string;

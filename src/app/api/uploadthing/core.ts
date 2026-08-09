@@ -1,15 +1,17 @@
 import "server-only";
 
 import { auth } from "@clerk/nextjs/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { createUploadthing, type FileRouter } from "uploadthing/next";
 import { UTApi, UTFile, UploadThingError } from "uploadthing/server";
+import { z } from "zod";
 
 import { getDb } from "@/db";
-import { uploads, userAvatars } from "@/db/schema";
+import { scrapbookMembers, uploads, userAvatars } from "@/db/schema";
 import type { CharacterGenerationResult } from "@/lib/character-avatar";
-import { createCharacterAvatar, createMemoryImage } from "@/lib/gemini";
+import { createCharacterAvatar, createMemoryModelArtifact } from "@/lib/gemini";
 import type { MemoryGenerationResult } from "@/lib/memory-artifacts";
+import { getRoomMembership } from "@/lib/scrapbook-rooms";
 
 const upload = createUploadthing();
 const uploadThing = new UTApi();
@@ -20,16 +22,16 @@ function imageExtension(mimeType: string) {
   return "png";
 }
 
-function artifactFileName(keyObject: string, mimeType: string) {
+function artifactFileName(keyObject: string) {
   const slug = keyObject.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-  return `${slug || "memory-artifact"}-${crypto.randomUUID()}.${imageExtension(mimeType)}`;
+  return `${slug || "memory-artifact"}-${crypto.randomUUID()}.json`;
 }
 
 function avatarFileName(mimeType: string) {
   return `character-avatar-${crypto.randomUUID()}.${imageExtension(mimeType)}`;
 }
 
-function publicGenerationError(error: unknown) {
+function publicGenerationError(error: unknown, kind: "avatar" | "memory") {
   if (error instanceof Error && error.message.includes("GEMINI_API_KEY")) {
     return "Gemini is not configured yet. Add GEMINI_API_KEY and try again.";
   }
@@ -38,10 +40,12 @@ function publicGenerationError(error: unknown) {
     error instanceof Error &&
     /quota|billing|resource_exhausted/i.test(error.message)
   ) {
-    return "Gemini image generation has no free-tier API quota. Enable billing for this Google AI project, then try again.";
+    return "Gemini generation is out of quota for this Google AI project. Check billing or quota, then try again.";
   }
 
-  return "The memory was uploaded, but its illustration could not be generated. Please try again.";
+  return kind === "memory"
+    ? "The memory was uploaded, but its 3D keepsake could not be generated. Please try again."
+    : "The photo was uploaded, but its character could not be generated. Please try again.";
 }
 
 export const uploadRouter = {
@@ -51,7 +55,11 @@ export const uploadRouter = {
     pdf: { maxFileSize: "8MB", maxFileCount: 5 },
     text: { maxFileSize: "1MB", maxFileCount: 5 },
   }, { awaitServerData: true })
-    .middleware(async ({ files }) => {
+    .input(z.object({
+      recipientUserId: z.string().min(1).max(255).nullable(),
+      roomCode: z.string().trim().min(4).max(8).nullable(),
+    }))
+    .middleware(async ({ files, input }) => {
       const { userId } = await auth();
 
       if (!userId) {
@@ -62,13 +70,51 @@ export const uploadRouter = {
         throw new UploadThingError("Upload no more than five memories at a time.");
       }
 
-      return { userId };
+      if (!input.roomCode && !input.recipientUserId) {
+        return {
+          recipientUserId: userId,
+          roomId: null,
+          userId,
+        };
+      }
+
+      if (!input.roomCode || !input.recipientUserId) {
+        throw new UploadThingError("Choose a scrapbook member before uploading.");
+      }
+
+      const membership = await getRoomMembership(input.roomCode, userId);
+      if (!membership) {
+        throw new UploadThingError("Join this scrapbook before uploading memories.");
+      }
+
+      const [recipient] = await getDb()
+        .select({ userId: scrapbookMembers.clerkUserId })
+        .from(scrapbookMembers)
+        .where(
+          and(
+            eq(scrapbookMembers.roomId, membership.roomId),
+            eq(scrapbookMembers.clerkUserId, input.recipientUserId),
+          ),
+        )
+        .limit(1);
+
+      if (!recipient) {
+        throw new UploadThingError("That person is not a member of this scrapbook.");
+      }
+
+      return {
+        recipientUserId: recipient.userId,
+        roomId: membership.roomId,
+        userId,
+      };
     })
     .onUploadComplete(async ({ metadata, file }) => {
       const [sourceUpload] = await getDb()
         .insert(uploads)
         .values({
           clerkUserId: metadata.userId,
+          roomId: metadata.roomId,
+          recipientClerkUserId: metadata.recipientUserId,
           fileKey: file.key,
           fileName: file.name,
           fileUrl: file.ufsUrl,
@@ -88,21 +134,21 @@ export const uploadRouter = {
           throw new Error(`Could not read uploaded memory (${sourceResponse.status}).`);
         }
 
-        const generated = await createMemoryImage({
+        const generated = await createMemoryModelArtifact({
           bytes: new Uint8Array(await sourceResponse.arrayBuffer()),
           fileName: file.name,
           mimeType: file.type,
         });
         const generatedFile = new UTFile(
           [Buffer.from(generated.bytes)],
-          artifactFileName(generated.keyObject, generated.mimeType),
+          artifactFileName(generated.keyObject),
           { type: generated.mimeType },
         );
         const storedArtifact = await uploadThing.uploadFiles(generatedFile);
 
         if (storedArtifact.error || !storedArtifact.data) {
           throw new Error(
-            storedArtifact.error?.message || "UploadThing rejected the generated image.",
+            storedArtifact.error?.message || "UploadThing rejected the generated 3D model.",
           );
         }
 
@@ -125,9 +171,10 @@ export const uploadRouter = {
           artifact: {
             id: sourceUpload.id,
             name: generated.keyObject,
-            artifactImageUrl: storedArtifact.data.ufsUrl,
+            artifactModelUrl: storedArtifact.data.ufsUrl,
             originalMemory: file.name,
             addedBy: "You",
+            recipientId: metadata.recipientUserId,
           },
         } satisfies MemoryGenerationResult;
       } catch (error) {
@@ -152,7 +199,7 @@ export const uploadRouter = {
         return {
           status: "failed",
           sourceName: file.name,
-          error: publicGenerationError(error),
+          error: publicGenerationError(error, "memory"),
         } satisfies MemoryGenerationResult;
       }
     }),
@@ -284,7 +331,7 @@ export const uploadRouter = {
 
         return {
           status: "failed",
-          error: publicGenerationError(error),
+          error: publicGenerationError(error, "avatar"),
         } satisfies CharacterGenerationResult;
       }
     }),

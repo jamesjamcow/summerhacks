@@ -4,8 +4,10 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { UploadPanel } from "@/components/upload-panel";
+import { MemoryModelPreview } from "@/components/memory-model-preview";
 import { getDb } from "@/db";
 import { notes, uploads } from "@/db/schema";
+import { isMemoryModelFileType } from "@/lib/memory-model";
 
 async function createNote(formData: FormData) {
   "use server";
@@ -94,7 +96,7 @@ export default async function DashboardPage() {
           <h2>Files</h2>
           <p className="dashboard-panel-copy">
             Upload up to five images, voice notes, PDFs, or text files. Each one
-            becomes one illustrated keepsake.
+            becomes one generated 3D keepsake.
           </p>
           <div className="dashboard-uploader">
             <UploadPanel />
@@ -111,26 +113,29 @@ export default async function DashboardPage() {
                     </span>
                   </a>
                   {file.generatedFileUrl && file.keyObject ? (
-                    <a
-                      className="dashboard-artifact"
-                      href={file.generatedFileUrl}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      <span
-                        aria-label={`Generated ${file.keyObject} illustration`}
-                        role="img"
-                        style={{ backgroundImage: `url(${file.generatedFileUrl})` }}
-                      />
+                    <div className="dashboard-artifact">
+                      {isMemoryModelFileType(file.generatedFileType) ? (
+                        <MemoryModelPreview
+                          modelUrl={file.generatedFileUrl}
+                          name={file.keyObject}
+                        />
+                      ) : (
+                        <span
+                          aria-label={`Legacy illustration of ${file.keyObject}`}
+                          className="legacy-artifact-image"
+                          role="img"
+                          style={{ backgroundImage: `url(${file.generatedFileUrl})` }}
+                        />
+                      )}
                       <strong>{file.keyObject}</strong>
-                    </a>
+                    </div>
                   ) : (
                     <span className={`dashboard-generation-status is-${file.processingStatus}`}>
                       {file.processingStatus === "failed"
-                        ? "Illustration failed"
+                        ? "3D generation failed"
                         : file.processingStatus === "processing"
-                          ? "Illustrating…"
-                          : "Not illustrated"}
+                          ? "Building 3D keepsake…"
+                          : "Not generated"}
                     </span>
                   )}
                 </article>

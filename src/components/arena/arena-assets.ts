@@ -1,6 +1,12 @@
 import type { ArenaItem } from "./arena-types";
 
+import {
+  fetchMemoryModelSpec,
+  type MemoryModelSpec,
+} from "@/lib/memory-model";
+
 const imageCache = new Map<string, HTMLImageElement>();
+const modelCache = new Map<string, MemoryModelSpec>();
 
 function loadImage(url: string) {
   const cached = imageCache.get(url);
@@ -22,11 +28,31 @@ function loadImage(url: string) {
   });
 }
 
-export async function preloadArenaImages(items: ArenaItem[]) {
-  const urls = Array.from(new Set(items.map((item) => item.imageUrl).filter(Boolean)));
-  await Promise.all(urls.map(loadImage));
+async function loadModel(url: string) {
+  const cached = modelCache.get(url);
+  if (cached) return cached;
+  const spec = await fetchMemoryModelSpec(url);
+  modelCache.set(url, spec);
+  return spec;
+}
+
+export async function preloadArenaAssets(items: ArenaItem[]) {
+  const imageUrls = Array.from(new Set(
+    items.flatMap((item) => item.imageUrl ? [item.imageUrl] : []),
+  ));
+  const modelUrls = Array.from(new Set(
+    items.flatMap((item) => item.modelUrl ? [item.modelUrl] : []),
+  ));
+  await Promise.all([
+    ...imageUrls.map(loadImage),
+    ...modelUrls.map(loadModel),
+  ]);
 }
 
 export function getPreloadedArenaImage(url: string) {
   return imageCache.get(url);
+}
+
+export function getPreloadedArenaModel(url: string) {
+  return modelCache.get(url);
 }
