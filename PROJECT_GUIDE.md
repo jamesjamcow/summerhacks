@@ -114,6 +114,12 @@ be committed.
 Only variables beginning with `NEXT_PUBLIC_` may be referenced by client code.
 Do not rename a secret with that prefix.
 
+The checked-in example is configured for the private SummerHacks Tailscale
+demo. On `jamess-macbook-pro`, run `tailscale serve --bg 3000` for the web app
+and `tailscale serve --bg --https=8443 2567` for Colyseus. Tailnet devices open
+`https://jamess-macbook-pro.tail051804.ts.net`; local host testing can continue
+to use `http://localhost:3000`.
+
 The memory-keepsake path uses structured text output rather than Gemini image
 generation. Character avatar creation still uses an image-generation model,
 which may require billing on the Google Cloud project behind `GEMINI_API_KEY`.
