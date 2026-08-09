@@ -11,7 +11,7 @@ const allowedOrigins = (process.env.ARENA_ALLOWED_ORIGINS || "http://localhost:3
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-matchMaker.controller.DEFAULT_CORS_HEADERS["Access-Control-Allow-Credentials"] = "false";
+matchMaker.controller.DEFAULT_CORS_HEADERS["Access-Control-Allow-Credentials"] = "true";
 matchMaker.controller.getCorsHeaders = (headers) => {
   const origin = headers.get("origin");
   return {
@@ -25,7 +25,7 @@ export const arenaServer = defineServer({
   },
   express: (app) => {
     app.use(cors({
-      credentials: false,
+      credentials: true,
       origin(origin, callback) {
         if (!origin || allowedOrigins.includes(origin)) callback(null, true);
         else callback(null, false);

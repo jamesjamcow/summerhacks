@@ -121,6 +121,10 @@ and `tailscale serve --bg --https=8443 2567` for Colyseus. Tailnet devices open
 to use `http://localhost:3000`. That Tailscale hostname is also listed in
 `next.config.ts` under `allowedDevOrigins` so Next.js development assets and
 hot-reload connections are not rejected when served through the HTTPS proxy.
+The Colyseus CORS response permits credentialed requests only from the explicit
+`ARENA_ALLOWED_ORIGINS` list because its browser SDK sends matchmaking requests
+with credential mode enabled even though arena authentication uses a bearer
+ticket.
 
 The memory-keepsake path uses structured text output rather than Gemini image
 generation. Character avatar creation still uses an image-generation model,
