@@ -1,5 +1,8 @@
 export const MEMORY_MODEL_MIME_TYPE = "application/json";
 
+export const MEMORY_ITEM_TYPES = ["weapon", "power-up"] as const;
+export type MemoryItemType = (typeof MEMORY_ITEM_TYPES)[number];
+
 export function isMemoryModelFileType(value: string | null | undefined) {
   return value?.split(";", 1)[0]?.trim().toLowerCase() === MEMORY_MODEL_MIME_TYPE;
 }
@@ -28,10 +31,41 @@ export type MemoryModelPart = {
 export type MemoryModelSpec = {
   version: 1;
   name: string;
+  /** Optional only so model artifacts created before item classification remain readable. */
+  itemType?: MemoryItemType;
   parts: MemoryModelPart[];
 };
 
 const shapeSet = new Set<string>(MEMORY_MODEL_SHAPES);
+const itemTypeSet = new Set<string>(MEMORY_ITEM_TYPES);
+const modelKeys = new Set(["version", "name", "itemType", "parts"]);
+const partKeys = new Set(["shape", "color", "position", "rotation", "scale"]);
+
+const OBVIOUS_POWER_UP_PATTERNS = [
+  /\b(?:bug|insect|beetle|cricket|ant|butterfly)\b/i,
+  /\b(?:water|juice|coffee|tea|milk|soda|pop|lemonade|smoothie|drink|beverage)\b/i,
+  /\b(?:bottle|cup|mug|flask|canteen|thermos)\b/i,
+  /\b(?:apple|banana|berry|bread|burger|cake|candy|chocolate|cookie|donut|doughnut|egg|food|fries|fruit|hot dog|ice cream|meal|pizza|sandwich|snack|soup|taco)\b/i,
+  /\b(?:medicine|potion|vitamin|elixir|energy drink|protein shake)\b/i,
+] as const;
+
+export function isMemoryItemType(value: unknown): value is MemoryItemType {
+  return typeof value === "string" && itemTypeSet.has(value);
+}
+
+/**
+ * Keeps legacy artifacts deterministic and corrects the most obvious Gemini
+ * misclassifications without trying to replace visual reasoning in code.
+ */
+export function resolveMemoryItemType(
+  name: string,
+  proposedType?: unknown,
+): MemoryItemType {
+  if (OBVIOUS_POWER_UP_PATTERNS.some((pattern) => pattern.test(name))) {
+    return "power-up";
+  }
+  return isMemoryItemType(proposedType) ? proposedType : "weapon";
+}
 
 function finiteNumber(value: unknown, minimum: number, maximum: number) {
   return typeof value === "number" && Number.isFinite(value)
@@ -60,27 +94,47 @@ function color(value: unknown) {
 
 export function parseMemoryModelSpec(
   value: unknown,
-  limits: { maximumParts?: number; minimumParts?: number } = {},
+  limits: {
+    maximumParts?: number;
+    minimumParts?: number;
+    requireItemType?: boolean;
+  } = {},
 ): MemoryModelSpec {
   if (!value || typeof value !== "object") {
     throw new Error("The generated model is not a JSON object.");
   }
 
   const candidate = value as Record<string, unknown>;
+  if (candidate.version !== 1) {
+    throw new Error("The generated model has an unsupported version.");
+  }
+  if (Object.keys(candidate).some((key) => !modelKeys.has(key))) {
+    throw new Error("The generated model contains unexpected properties.");
+  }
   const name = typeof candidate.name === "string" ? candidate.name.trim().slice(0, 80) : "";
   if (!name) throw new Error("The generated model has no name.");
+  const itemType = isMemoryItemType(candidate.itemType) ? candidate.itemType : undefined;
+  if (limits.requireItemType && !itemType) {
+    throw new Error("The generated model has no valid gameplay item type.");
+  }
   const minimumParts = limits.minimumParts ?? 1;
   const maximumParts = limits.maximumParts ?? 16;
   if (!Array.isArray(candidate.parts) || candidate.parts.length < minimumParts) {
     throw new Error("The generated model has no parts.");
   }
+  if (candidate.parts.length > maximumParts) {
+    throw new Error("The generated model has too many parts.");
+  }
 
-  const parts = candidate.parts.slice(0, maximumParts).map((value, index) => {
+  const parts = candidate.parts.map((value, index) => {
     if (!value || typeof value !== "object") {
       throw new Error(`Model part ${index + 1} is invalid.`);
     }
 
     const part = value as Record<string, unknown>;
+    if (Object.keys(part).some((key) => !partKeys.has(key))) {
+      throw new Error(`Model part ${index + 1} contains unexpected properties.`);
+    }
     const shape = typeof part.shape === "string" && shapeSet.has(part.shape)
       ? (part.shape as MemoryModelShape)
       : null;
@@ -96,7 +150,12 @@ export function parseMemoryModelSpec(
     return { shape, color: partColor, position, rotation, scale };
   });
 
-  return { version: 1, name, parts };
+  return {
+    version: 1,
+    name,
+    ...(itemType ? { itemType } : {}),
+    parts,
+  };
 }
 
 export async function fetchMemoryModelSpec(modelUrl: string) {

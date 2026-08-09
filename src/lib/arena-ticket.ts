@@ -1,8 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+import { isMemoryItemType, type MemoryItemType } from "@/lib/memory-model";
+
 export type ArenaTicketItem = {
   id: string;
   name: string;
+  itemType: MemoryItemType;
   memoryLabel: string;
   imageUrl?: string;
   modelUrl?: string;
@@ -47,6 +50,7 @@ function isTicketItem(value: unknown): value is ArenaTicketItem {
   if (!value || typeof value !== "object") return false;
   const item = value as Record<string, unknown>;
   return text(item.id, 64) && text(item.name, 100) && text(item.memoryLabel, 300) &&
+    isMemoryItemType(item.itemType) &&
     (item.imageUrl === undefined || text(item.imageUrl, 2_048)) &&
     (item.modelUrl === undefined || text(item.modelUrl, 2_048)) &&
     (item.originalImageUrl === undefined || text(item.originalImageUrl, 2_048)) &&

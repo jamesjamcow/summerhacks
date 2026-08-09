@@ -4,7 +4,7 @@ import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
 import { getDb } from "@/db";
 import { scrapbookMatchPages, scrapbookMembers, uploads, userAvatars } from "@/db/schema";
 import { isCharacterAvatarFileType } from "@/lib/character-avatar";
-import { isMemoryModelFileType } from "@/lib/memory-model";
+import { isMemoryModelFileType, resolveMemoryItemType } from "@/lib/memory-model";
 import { getRoomMembership, normalizeRoomCode } from "@/lib/scrapbook-rooms";
 import type { ScrapbookMatchPage } from "@/lib/scrapbook-pages";
 
@@ -69,6 +69,7 @@ export async function GET(
       generatedFileType: uploads.generatedFileType,
       id: uploads.id,
       keyObject: uploads.keyObject,
+      itemType: uploads.itemType,
       recipientClerkUserId: uploads.recipientClerkUserId,
       roomId: uploads.roomId,
     })
@@ -109,6 +110,7 @@ export async function GET(
         : {}),
       id: upload.id,
       name: upload.keyObject,
+      itemType: resolveMemoryItemType(upload.keyObject, upload.itemType),
       originalMemory: upload.fileName,
       recipientId,
     }];

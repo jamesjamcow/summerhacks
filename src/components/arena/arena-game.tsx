@@ -38,7 +38,7 @@ type ArenaGameProps = {
   localPlayer: ArenaPlayerSnapshot;
   map: ArenaMapSpec;
   onInput: (input: ArenaInputMessage) => void;
-  onShoot: () => void;
+  onUseItem: () => void;
   players: Record<string, ArenaPlayerSnapshot>;
   projectiles: Record<string, ArenaProjectileSnapshot>;
 };
@@ -397,6 +397,7 @@ function arenaItem(item: ArenaPlayerSnapshot["item"]): ArenaItem {
   return {
     id: item.id,
     imageUrl: item.imageUrl || undefined,
+    itemType: item.itemType,
     memoryLabel: item.memoryLabel,
     modelUrl: item.modelUrl || undefined,
     name: item.name,
@@ -442,7 +443,7 @@ export default function ArenaGame({
   localPlayer,
   map,
   onInput,
-  onShoot,
+  onUseItem,
   players,
   projectiles,
 }: ArenaGameProps) {
@@ -452,15 +453,16 @@ export default function ArenaGame({
   const localPlayerRef = useRef(localPlayer);
   const playersRef = useRef(players);
   const projectilesRef = useRef(projectiles);
-  const shootHandlerRef = useRef(onShoot);
+  const useItemHandlerRef = useRef(onUseItem);
   const previousHealthRef = useRef(localPlayer.health);
   const [locked, setLocked] = useState(false);
   const [hitFlash, setHitFlash] = useState(false);
+  const [hudNow, setHudNow] = useState(() => Date.now());
   const mapKey = `${map.source}:${map.themeName}:${map.landmarks.map((landmark) => landmark.id).join(",")}`;
 
   useEffect(() => { activeRef.current = active; }, [active]);
   useEffect(() => { inputHandlerRef.current = onInput; }, [onInput]);
-  useEffect(() => { shootHandlerRef.current = onShoot; }, [onShoot]);
+  useEffect(() => { useItemHandlerRef.current = onUseItem; }, [onUseItem]);
   useEffect(() => { localPlayerRef.current = localPlayer; }, [localPlayer]);
   useEffect(() => { playersRef.current = players; }, [players]);
   useEffect(() => { projectilesRef.current = projectiles; }, [projectiles]);
@@ -479,7 +481,14 @@ export default function ArenaGame({
     if (!active && document.pointerLockElement) document.exitPointerLock();
   }, [active]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setHudNow(Date.now()), 100);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const opponent = Object.values(players).find((player) => player.userId !== localPlayer.userId);
+  const isConsuming = localPlayer.consumingEndsAt > hudNow;
+  const consumeImageUrl = item.originalImageUrl || item.imageUrl;
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -523,6 +532,7 @@ export default function ArenaGame({
     const landmarkItems = map.landmarks.map<ArenaItem>((landmark) => ({
       id: landmark.id,
       imageUrl: landmark.imageUrl,
+      itemType: "weapon",
       memoryLabel: landmark.name,
       modelUrl: landmark.modelUrl,
       name: landmark.name,
@@ -601,7 +611,7 @@ export default function ArenaGame({
         return;
       }
       if (event.button !== 0) return;
-      shootHandlerRef.current();
+      useItemHandlerRef.current();
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -727,11 +737,24 @@ export default function ArenaGame({
         />
       ) : null}
       <div className="arena-feed">
-        <span>Throw at {opponent?.name ?? "the other player"}</span>
-        <span>Equipped: {item.name}</span>
+        <span>{item.itemType === "power-up" ? "Consume for +20% speed" : `Throw at ${opponent?.name ?? "the other player"}`}</span>
+        <span>Equipped: {item.name} · {item.itemType === "power-up" ? "Power-up" : "Weapon"}</span>
+        {localPlayer.speedBoostEndsAt > hudNow ? <span className="arena-boost-status">Speed boosted +20%</span> : null}
+        {item.itemType === "power-up" && localPlayer.powerUpCooldownEndsAt > hudNow ? (
+          <span>Power-up ready in {Math.ceil((localPlayer.powerUpCooldownEndsAt - hudNow) / 1_000)}s</span>
+        ) : null}
       </div>
       <div className="arena-crosshair" aria-hidden="true"><i /><i /></div>
-      <div className="arena-hand" aria-hidden="true">
+      {isConsuming && consumeImageUrl ? (
+        <div
+          className="arena-consume-image"
+          style={{ backgroundImage: `url(${consumeImageUrl})` }}
+        />
+      ) : null}
+      <div
+        className={`arena-hand${isConsuming ? " is-consuming" : ""}`}
+        aria-hidden="true"
+      >
         {item.modelUrl ? (
           <MemoryModelPreview className="arena-held-model" modelUrl={item.modelUrl} name={item.name} />
         ) : (
@@ -745,7 +768,7 @@ export default function ArenaGame({
         <small>MEMORY LOOP</small>
         <strong>{localPlayer.inventoryIndex + 1}<span>/{localPlayer.inventorySize}</span></strong>
       </div>
-      <div className="arena-controls"><span>W A S D</span> move <span>SPACE</span> jump <span>CLICK</span> throw <span>ESC</span> cursor</div>
+      <div className="arena-controls"><span>W A S D</span> move <span>SPACE</span> jump <span>CLICK</span> {item.itemType === "power-up" ? "consume" : "throw"} <span>ESC</span> cursor</div>
       {!locked && active ? (
         <button
           className="arena-start"

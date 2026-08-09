@@ -5,6 +5,7 @@ import type { ArenaMapSpec } from "@/lib/arena-world";
 export const ArenaItemState = schema({
   id: "string",
   name: "string",
+  itemType: "string",
   memoryLabel: "string",
   imageUrl: "string",
   modelUrl: "string",
@@ -27,6 +28,9 @@ export const ArenaPlayerState = schema({
   connected: "boolean",
   inventoryIndex: "uint8",
   inventorySize: "uint8",
+  consumingEndsAt: "float64",
+  powerUpCooldownEndsAt: "float64",
+  speedBoostEndsAt: "float64",
   item: ArenaItemState,
 });
 export type ArenaPlayerState = SchemaType<typeof ArenaPlayerState>;
@@ -172,9 +176,13 @@ export type ArenaPlayerSnapshot = {
   connected: boolean;
   inventoryIndex: number;
   inventorySize: number;
+  consumingEndsAt: number;
+  powerUpCooldownEndsAt: number;
+  speedBoostEndsAt: number;
   item: {
     id: string;
     name: string;
+    itemType: "weapon" | "power-up";
     memoryLabel: string;
     imageUrl: string;
     modelUrl: string;
@@ -214,6 +222,7 @@ export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
   const itemSnapshot = (item: ArenaItemState): ArenaPlayerSnapshot["item"] => ({
     id: item.id,
     name: item.name,
+    itemType: item.itemType === "power-up" ? "power-up" : "weapon",
     memoryLabel: item.memoryLabel,
     imageUrl: item.imageUrl,
     modelUrl: item.modelUrl,
@@ -291,6 +300,9 @@ export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
         connected: player.connected,
         inventoryIndex: player.inventoryIndex,
         inventorySize: player.inventorySize,
+        consumingEndsAt: player.consumingEndsAt,
+        powerUpCooldownEndsAt: player.powerUpCooldownEndsAt,
+        speedBoostEndsAt: player.speedBoostEndsAt,
         item: itemSnapshot(player.item),
       },
     ])),

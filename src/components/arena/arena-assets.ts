@@ -57,7 +57,9 @@ async function loadModel(url: string) {
 
 export async function preloadArenaAssets(items: ArenaItem[]) {
   const imageUrls = Array.from(new Set(
-    items.flatMap((item) => item.imageUrl ? [item.imageUrl] : []),
+    items.flatMap((item) => [item.imageUrl, item.originalImageUrl].filter(
+      (url): url is string => Boolean(url),
+    )),
   ));
   const modelUrls = Array.from(new Set(
     items.flatMap((item) => item.modelUrl ? [item.modelUrl] : []),

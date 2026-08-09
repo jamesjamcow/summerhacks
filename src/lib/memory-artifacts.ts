@@ -1,6 +1,7 @@
 export type MemoryArtifact = {
   id: string;
   name: string;
+  itemType?: "weapon" | "power-up";
   artifactModelUrl?: string;
   /** Legacy image artifacts remain readable after the 3D pipeline migration. */
   artifactImageUrl?: string;

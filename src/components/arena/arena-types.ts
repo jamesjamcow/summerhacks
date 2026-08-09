@@ -1,5 +1,6 @@
 export type ArenaItem = {
   id: string;
+  itemType: "weapon" | "power-up";
   modelUrl?: string;
   imageUrl?: string;
   originalImageUrl?: string;

@@ -64,6 +64,9 @@ type PlayerMotionRuntime = {
 const COUNTDOWN_MS = 3_000;
 const ROUND_BREAK_MS = 3_000;
 const SHOT_COOLDOWN_MS = 320;
+const POWER_UP_CONSUME_MS = 1_000;
+const POWER_UP_DURATION_MS = 5_000;
+const POWER_UP_SPEED_MULTIPLIER = 1.2;
 const PROJECTILE_LIFETIME_MS = 4_000;
 const EMPTY_INPUT: ArenaInput = {
   forward: 0,
@@ -91,6 +94,7 @@ function stateItem(item: ArenaTicketItem) {
   return new ArenaItemState({
     id: item.id,
     imageUrl: item.imageUrl || "",
+    itemType: item.itemType,
     memoryLabel: item.memoryLabel,
     modelUrl: item.modelUrl || "",
     name: item.name,
@@ -102,6 +106,7 @@ function emptyStateItem() {
   return new ArenaItemState({
     id: "",
     imageUrl: "",
+    itemType: "weapon",
     memoryLabel: "",
     modelUrl: "",
     name: "memory",
@@ -113,6 +118,7 @@ function copyStateItem(item: ArenaItemState) {
   return new ArenaItemState({
     id: item.id,
     imageUrl: item.imageUrl,
+    itemType: item.itemType,
     memoryLabel: item.memoryLabel,
     modelUrl: item.modelUrl,
     name: item.name,
@@ -176,7 +182,7 @@ export class ArenaRoom extends Room<{
     this.metadata = { roomCode };
     this.setSimulationInterval((deltaTime) => this.updateWorld(deltaTime), 1000 / 30);
     this.onMessage("input", (client, message: unknown) => this.receiveInput(client, message));
-    this.onMessage("shoot", (client) => this.shoot(client));
+    this.onMessage("use-item", (client) => this.useItem(client));
   }
 
   onJoin(client: ArenaRoomClient, _options: unknown, auth: ArenaTicketPayload) {
@@ -197,13 +203,16 @@ export class ArenaRoom extends Room<{
       avatarImageUrl: ticket.avatarImageUrl || "",
       avatarModelUrl: ticket.avatarModelUrl || "",
       connected: true,
+      consumingEndsAt: 0,
       health: 100,
       inventoryIndex: 0,
       inventorySize: ticket.inventory.length,
       item: emptyStateItem(),
       name: ticket.name,
       pitch: 0,
+      powerUpCooldownEndsAt: 0,
       score: 0,
+      speedBoostEndsAt: 0,
       userId: ticket.userId,
       x: spawn.x,
       y: 0,
@@ -271,13 +280,20 @@ export class ArenaRoom extends Room<{
     });
   }
 
-  private shoot(client: ArenaRoomClient) {
+  private useItem(client: ArenaRoomClient) {
     if (this.state.phase !== "playing") return;
     const userId = client.userData?.userId || "";
     const player = this.state.players.get(userId);
     if (!player || !player.connected || player.health <= 0) return;
 
     const now = Date.now();
+    if (player.consumingEndsAt > now) return;
+    if (player.item.itemType === "power-up") {
+      if (player.powerUpCooldownEndsAt > now) return;
+      player.consumingEndsAt = now + POWER_UP_CONSUME_MS;
+      return;
+    }
+
     if (now - (this.lastShotAt.get(userId) || 0) < SHOT_COOLDOWN_MS) return;
     this.lastShotAt.set(userId, now);
 
@@ -308,8 +324,9 @@ export class ArenaRoom extends Room<{
     this.advancePhase(now);
     if (this.state.phase !== "playing") return;
 
+    this.completeConsumptions(now);
     const delta = Math.min(deltaTimeMs / 1000, 0.05);
-    this.state.players.forEach((player) => this.movePlayer(player, delta));
+    this.state.players.forEach((player) => this.movePlayer(player, delta, now));
     this.state.projectiles.forEach((projectile) => this.moveProjectile(projectile, delta, now));
   }
 
@@ -339,7 +356,17 @@ export class ArenaRoom extends Room<{
     this.state.phaseEndsAt = now + COUNTDOWN_MS;
   }
 
-  private movePlayer(player: ArenaPlayerState, delta: number) {
+  private completeConsumptions(now: number) {
+    this.state.players.forEach((player) => {
+      if (!player.consumingEndsAt || now < player.consumingEndsAt) return;
+      player.consumingEndsAt = 0;
+      player.speedBoostEndsAt = now + POWER_UP_DURATION_MS;
+      player.powerUpCooldownEndsAt = player.speedBoostEndsAt;
+      this.advanceInventory(player);
+    });
+  }
+
+  private movePlayer(player: ArenaPlayerState, delta: number, now: number) {
     const input = this.inputByUser.get(player.userId) || EMPTY_INPUT;
     const motion = this.motionByUser.get(player.userId);
     player.yaw = input.yaw;
@@ -360,7 +387,8 @@ export class ArenaRoom extends Room<{
       strafe /= length;
     }
 
-    const distance = ARENA_MOVE_SPEED * delta;
+    const speedMultiplier = player.speedBoostEndsAt > now ? POWER_UP_SPEED_MULTIPLIER : 1;
+    const distance = ARENA_MOVE_SPEED * speedMultiplier * delta;
     const dx = (-Math.sin(input.yaw) * forward + Math.cos(input.yaw) * strafe) * distance;
     const dz = (-Math.cos(input.yaw) * forward - Math.sin(input.yaw) * strafe) * distance;
     if (!isArenaPositionBlocked(player.x + dx, player.y, player.z, this.world.blocks)) player.x += dx;
@@ -525,6 +553,9 @@ export class ArenaRoom extends Room<{
     this.state.players.forEach((player) => {
       player.health = 100;
       player.score = 0;
+      player.consumingEndsAt = 0;
+      player.powerUpCooldownEndsAt = 0;
+      player.speedBoostEndsAt = 0;
       this.inventoryCursorByUser.set(player.userId, 0);
       this.equipPlayer(player);
     });
@@ -558,6 +589,9 @@ export class ArenaRoom extends Room<{
       player.z = spawn.z;
       player.yaw = spawn.yaw;
       player.pitch = 0;
+      player.consumingEndsAt = 0;
+      player.powerUpCooldownEndsAt = 0;
+      player.speedBoostEndsAt = 0;
       this.inputByUser.set(player.userId, { ...EMPTY_INPUT, yaw: spawn.yaw });
       this.motionByUser.set(player.userId, {
         grounded: true,

@@ -103,9 +103,9 @@ export function useColyseusArena(roomCode: string, enabled: boolean) {
     roomRef.current?.send("input", input);
   }, []);
 
-  const shoot = useCallback(() => {
-    roomRef.current?.send("shoot");
+  const useItem = useCallback(() => {
+    roomRef.current?.send("use-item");
   }, []);
 
-  return { error, sendInput, shoot, snapshot, status };
+  return { error, sendInput, snapshot, status, useItem };
 }

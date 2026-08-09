@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { MemoryArtifact } from "@/lib/memory-artifacts";
 import type { ArenaPlayerSnapshot } from "@/lib/arena-realtime";
+import { resolveMemoryItemType } from "@/lib/memory-model";
 import type { ScrapbookMatchPage } from "@/lib/scrapbook-pages";
 import { parseTripPortrait, type TripPortrait } from "@/lib/trip-portrait";
 
@@ -32,6 +33,7 @@ function stateItem(item: ArenaPlayerSnapshot["item"]): ArenaItem {
   return {
     id: item.id,
     imageUrl: item.imageUrl || undefined,
+    itemType: item.itemType,
     memoryLabel: item.memoryLabel,
     modelUrl: item.modelUrl || undefined,
     name: item.name,
@@ -52,6 +54,7 @@ export default function ArenaMatch({
     item.artifactModelUrl || item.artifactImageUrl
       ? [{
           id: item.id,
+          itemType: resolveMemoryItemType(item.name, item.itemType),
           modelUrl: item.artifactModelUrl,
           imageUrl: item.artifactImageUrl,
           memoryLabel: item.originalMemory,
@@ -381,7 +384,7 @@ export default function ArenaMatch({
         localPlayer={localPlayer}
         map={snapshot.map}
         onInput={realtime.sendInput}
-        onShoot={realtime.shoot}
+        onUseItem={realtime.useItem}
         players={snapshot.players}
         projectiles={snapshot.projectiles}
       />

@@ -42,6 +42,7 @@ export const uploads = pgTable(
     fileSize: integer("file_size").notNull(),
     processingStatus: text("processing_status").default("processing").notNull(),
     keyObject: text("key_object"),
+    itemType: text("item_type"),
     generatedFileKey: text("generated_file_key").unique(),
     generatedFileUrl: text("generated_file_url"),
     generatedFileType: text("generated_file_type"),

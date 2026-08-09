@@ -310,7 +310,9 @@ function InventoryItemCard({ item }: { item: MemoryItem }) {
       )}
       <div className="inventory-item-details">
         <h4>{item.name}</h4>
-        {item.ability ? <p>{item.ability}</p> : null}
+        {item.itemType ? (
+          <p>{item.itemType === "power-up" ? "Power-up · +20% movement speed" : "Weapon · throwable memory"}</p>
+        ) : item.ability ? <p>{item.ability}</p> : null}
         {item.originalMemory ? <small>{item.originalMemory}</small> : null}
         {item.addedBy ? <span>Added by {item.addedBy}</span> : null}
       </div>
@@ -512,10 +514,12 @@ function MatchScrapbookPage({ page }: { page: ScrapbookMatchPage }) {
 }
 
 function Scrapbook({
+  onBackToLobby,
   onPortraitCreated,
   session,
   viewer: initialViewer,
 }: {
+  onBackToLobby: () => void;
   onPortraitCreated: (portrait: TripPortrait) => void;
   session: ScrapbookSession;
   viewer: Viewer;
@@ -631,7 +635,7 @@ function Scrapbook({
           <button
             aria-label="Back to scrapbook"
             className="scrapbook-back-button"
-            onClick={() => setSelectedMemberId(undefined)}
+            onClick={onBackToLobby}
             type="button"
           >
             <span aria-hidden="true" className="scrapbook-back-arrow">←</span>
@@ -1027,6 +1031,13 @@ export function BookExperience({
 
       {step === "scrapbook" && session ? (
         <Scrapbook
+          onBackToLobby={() => {
+            setDialog(undefined);
+            setDragPreview(undefined);
+            setSession(undefined);
+            setSpread(TOTAL_SPREADS - 1);
+            setStep("lobby");
+          }}
           onPortraitCreated={rememberTripPortrait}
           session={session}
           viewer={viewer}

@@ -15,8 +15,9 @@ deliberately small but exercises the full stack:
 2. A Server Action writes the user's notes to Neon Postgres.
 3. UploadThing stores uploaded memory files.
 4. UploadThing's completion callback sends each file to Gemini, receives one
-   validated low-poly model specification for its key object, uploads that JSON
-   artifact to UploadThing, and writes the linked metadata to Neon.
+   validated low-poly model specification and gameplay type for its key object,
+   uploads that JSON artifact to UploadThing, and writes the linked metadata to
+   Neon.
 5. Dashboard queries include the Clerk user ID, so users only read their own
    notes and upload records.
 
@@ -158,7 +159,8 @@ run end to end.
 
 `uploads` contains the authenticated uploader's source-file metadata plus the
 optional scrapbook room and recipient member, processing status, the extracted
-key object, generated-file metadata, failure detail, and processing timestamps.
+key object, validated `item_type` (`weapon` or `power-up`), generated-file
+metadata, failure detail, and processing timestamps.
 A single row is the durable one-to-one link between one source memory and its one
 generated artifact. Dashboard uploads without a room remain personal to their
 uploader. The shared-inventory migration safely assigns existing uploads made by
@@ -246,12 +248,16 @@ supported categories:
 
 UploadThing calls `onUploadComplete` separately for each file. The callback
 persists the source metadata, reads the source bytes, and asks Gemini for one
-lowercase concrete key object plus a low-poly model made from an allowlist of
-primitive shapes. The server validates and bounds every name, shape, color,
-position, rotation, scale, and part count before serializing the specification
-as JSON and uploading it through UploadThing. The browser constructs the actual
-Three.js object from that data; AI-authored JavaScript is never executed. Five
-source files therefore produce five independent 3D artifacts.
+lowercase concrete key object, an exact `weapon`/`power-up` classification, and
+a low-poly model made from an allowlist of primitive shapes. Gemini uses a
+single-candidate, zero-temperature JSON-schema response. The server rejects
+unknown fields, invalid enums, unsupported versions, extra parts, and invalid
+geometry before serializing the specification as JSON and uploading it through
+UploadThing. A deterministic safety rule classifies obvious consumables such as
+food, drinks, water bottles, medicine, and bugs as power-ups even if Gemini
+proposes `weapon`. The browser constructs the actual Three.js object from that
+data; AI-authored JavaScript is never executed. Five source files therefore
+produce five independent 3D artifacts.
 
 For a multi-file selection, the client submits each source as an independent
 UploadThing request through a three-worker pool. Up to three complete pipelines
@@ -332,17 +338,22 @@ arena's shared block geometry, map contract, safe landmark slots, and bounds liv
 in `src/lib/arena-world.ts`. The generated map is replicated through Colyseus, so
 the server collision model and Three.js renderer consume the same layout. Schema patches
 replace the former HTTP polling and red-dot proxy hits.
-Each accepted throw uses the owner's currently equipped memory and immediately
-advances their server-owned inventory cursor. Every item is used once in upload
-inventory order before the cursor wraps to the first item, continuously across
-rounds. Projectiles retain the item they were created with even after the player
-advances to the next one. Each browser loads the model or image attached to that
-replicated projectile before drawing it instead of substituting the generic
-heart, so both players see the same thrown object. The remote player is a live
-avatar-bearing character at their synchronized transform. When an image-backed
-3D keepsake hits a player, that player sees the attacker's original UploadThing
-image for the projectile that actually landed during the round-end memory
-reveal.
+Each click uses the owner's currently equipped memory according to its signed,
+server-validated type. Weapons become authoritative projectiles and immediately
+advance the server-owned inventory cursor. Power-ups instead run a one-second
+consume action, during which the first-person hand carries the keepsake toward
+the player's face; when the action completes, Colyseus advances the inventory
+and applies exactly 20% extra movement speed for five seconds. The next power-up
+cannot be consumed until that five-second boost/cooldown ends, although weapons
+remain usable. Every item is used once in upload inventory order before the
+cursor wraps. Projectiles retain the weapon they were created with even after
+the player advances to the next item. Each browser loads the model or image
+attached to that replicated projectile before drawing it instead of substituting
+the generic heart, so both players see the same thrown object. The remote player
+is a live avatar-bearing character at their synchronized transform. When an
+image-backed 3D weapon hits a player, that player sees the attacker's original
+UploadThing image for the projectile that actually landed during the round-end
+memory reveal.
 
 At match completion, Colyseus signs a receipt containing its server-owned match
 ID, room identity, winner, final scores, and result reason. Either authenticated
@@ -416,7 +427,11 @@ from both, verify the `generating-map` phase appears, and confirm both clients
 receive the same theme, biome, block layout, and photo landmarks. Test one room
 whose match inventories contain only outdoor photos and confirm its ground is
 green. Then verify each player sees the other's movement and confirm only a projectile
-that intersects the remote character scores a round. Finish the match, confirm
+that intersects the remote character scores a round. Upload a water bottle or
+bug memory and confirm it is labeled as a power-up. Consume it and verify its
+source image remains visible during the one-second hand-to-face animation, the
+inventory advances only after that second, movement is exactly 20% faster for
+five seconds, and another power-up is rejected during that cooldown. Finish the match, confirm
 both clients resolve to the same numbered result page, then close the arena and
 verify that page shows the authoritative winner, final score, and uploaded
 memory snapshot. On the losing client, verify Gemini assembles the page's photos,

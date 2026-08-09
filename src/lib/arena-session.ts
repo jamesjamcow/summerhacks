@@ -6,7 +6,7 @@ import { getDb } from "@/db";
 import { scrapbookMembers, uploads, userAvatars } from "@/db/schema";
 import type { ArenaTicketItem } from "@/lib/arena-ticket";
 import { isCharacterAvatarFileType } from "@/lib/character-avatar";
-import { isMemoryModelFileType } from "@/lib/memory-model";
+import { isMemoryModelFileType, resolveMemoryItemType } from "@/lib/memory-model";
 import { getRoomMembership } from "@/lib/scrapbook-rooms";
 
 export async function loadArenaSession(roomCode: string, userId: string) {
@@ -42,6 +42,7 @@ export async function loadArenaSession(roomCode: string, userId: string) {
         id: uploads.id,
         memoryLabel: uploads.fileName,
         name: uploads.keyObject,
+        itemType: uploads.itemType,
         sourceType: uploads.fileType,
         sourceUrl: uploads.fileUrl,
       })
@@ -64,6 +65,7 @@ export async function loadArenaSession(roomCode: string, userId: string) {
     return [{
       id: item.id,
       name: item.name,
+      itemType: resolveMemoryItemType(item.name, item.itemType),
       memoryLabel: item.memoryLabel,
       ...(item.sourceType.startsWith("image/")
         ? { originalImageUrl: item.sourceUrl }

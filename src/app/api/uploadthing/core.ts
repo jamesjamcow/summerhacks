@@ -155,6 +155,7 @@ export const uploadRouter = {
           .set({
             processingStatus: "complete",
             keyObject: generated.keyObject,
+            itemType: generated.spec.itemType,
             generatedFileKey: storedArtifact.data.key,
             generatedFileUrl: storedArtifact.data.ufsUrl,
             generatedFileType: storedArtifact.data.type,
@@ -169,6 +170,7 @@ export const uploadRouter = {
           artifact: {
             id: sourceUpload.id,
             name: generated.keyObject,
+            itemType: generated.spec.itemType,
             artifactModelUrl: storedArtifact.data.ufsUrl,
             ...(file.type.startsWith("image/")
               ? { originalImageUrl: file.ufsUrl }

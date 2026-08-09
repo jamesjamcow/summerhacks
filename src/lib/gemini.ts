@@ -8,6 +8,7 @@ import {
 import {
   MEMORY_MODEL_MIME_TYPE,
   parseMemoryModelSpec,
+  resolveMemoryItemType,
   type MemoryModelSpec,
 } from "@/lib/memory-model";
 
@@ -29,6 +30,9 @@ Selection rules:
 - Be specific enough to model, but general enough to recognize instantly.
 - Avoid vague categories such as "nature", "food", "memory", "people", or "scenery".
 - The name must be an English, lowercase, singular noun phrase of one to four words. No punctuation.
+- Classify the keepsake as exactly one gameplay itemType: "weapon" or "power-up".
+- Use "power-up" when the object is something a player can consume, eat, drink, ingest, or use up for a temporary benefit. Food, drinks, medicine, potions, bugs/insects, and drink containers such as a water bottle are power-ups.
+- Use "weapon" for every other object. Do not invent a third category and do not omit itemType.
 - Build one centered, upright object from 2 to 16 parts.
 - Use only box, sphere, cylinder, cone, capsule, torus, or dodecahedron parts.
 - Use simple vivid colors, flat forms, and chunky proportions that remain readable at small sizes.
@@ -202,6 +206,11 @@ export async function createMemoryModelArtifact(input: {
             type: "string",
             description: "One lowercase, singular, concrete object noun phrase.",
           },
+          itemType: {
+            type: "string",
+            enum: ["weapon", "power-up"],
+            description: "Whether the arena throws this object or consumes it for a speed boost.",
+          },
           parts: {
             type: "array",
             minItems: 2,
@@ -241,10 +250,11 @@ export async function createMemoryModelArtifact(input: {
             },
           },
         },
-        required: ["version", "name", "parts"],
+        required: ["version", "name", "itemType", "parts"],
         additionalProperties: false,
       },
-      temperature: 0.35,
+      candidateCount: 1,
+      temperature: 0,
     },
   });
 
@@ -264,7 +274,11 @@ export async function createMemoryModelArtifact(input: {
   const keyObject = normalizeKeyObject(candidate.name);
 
   if (!keyObject) throw new Error("Gemini returned an invalid memory object name.");
-  const spec = parseMemoryModelSpec({ ...candidate, name: keyObject });
+  const spec = parseMemoryModelSpec({
+    ...candidate,
+    name: keyObject,
+    itemType: resolveMemoryItemType(keyObject, candidate.itemType),
+  }, { requireItemType: true });
   const serialized = JSON.stringify(spec);
 
   return {
