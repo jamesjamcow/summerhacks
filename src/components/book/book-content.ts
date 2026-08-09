@@ -5,6 +5,7 @@ export type PageContent = {
   title: string;
   body: string;
   note?: string;
+  navigation?: readonly string[];
   artwork: PageArtwork;
   accent: string;
 };
@@ -32,9 +33,9 @@ export const TOTAL_SPREADS = BOOK_SPREADS.length;
 
 export const STATIC_LEFT_PAGE: PageContent = {
   eyebrow: "Summer / Twenty-six",
-  title: "For the things you keep meaning to make.",
+  title: "Hey there!",
   body: "A shared page is a tiny lobby for an idea. Open one, invite your people, and see where the night takes you.",
-  note: "No pitch deck required.",
+  navigation: ["Photos", "Friends", "Settings"],
   artwork: "sun",
   accent: "#ed6459",
 };

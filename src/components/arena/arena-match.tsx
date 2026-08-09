@@ -23,13 +23,14 @@ function remainingSeconds(endsAt: number, now: number) {
   return Math.max(0, Math.ceil((endsAt - now) / 1_000));
 }
 
-function playerItem(player: ArenaPlayerSnapshot): ArenaItem {
+function stateItem(item: ArenaPlayerSnapshot["item"]): ArenaItem {
   return {
-    id: player.item.id,
-    imageUrl: player.item.imageUrl || undefined,
-    memoryLabel: player.item.memoryLabel,
-    modelUrl: player.item.modelUrl || undefined,
-    name: player.item.name,
+    id: item.id,
+    imageUrl: item.imageUrl || undefined,
+    memoryLabel: item.memoryLabel,
+    modelUrl: item.modelUrl || undefined,
+    name: item.name,
+    originalImageUrl: item.originalImageUrl || undefined,
   };
 }
 
@@ -42,6 +43,7 @@ export default function ArenaMatch({ items, roomCode, viewer }: ArenaMatchProps)
           imageUrl: item.artifactImageUrl,
           memoryLabel: item.originalMemory,
           name: item.name,
+          originalImageUrl: item.originalImageUrl,
         }]
       : [],
   ), [items]);
@@ -52,6 +54,7 @@ export default function ArenaMatch({ items, roomCode, viewer }: ArenaMatchProps)
     roomCode,
     preloadStatus === "ready" && arenaItems.length > 0,
   );
+  const impactOriginalImageUrl = realtime.snapshot?.impactItem.originalImageUrl;
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +69,12 @@ export default function ArenaMatch({ items, roomCode, viewer }: ArenaMatchProps)
     const timer = window.setInterval(() => setClock(Date.now()), 100);
     return () => window.clearInterval(timer);
   }, [realtime.snapshot?.phaseEndsAt]);
+
+  useEffect(() => {
+    if (!impactOriginalImageUrl) return;
+    const image = new Image();
+    image.src = impactOriginalImageUrl;
+  }, [impactOriginalImageUrl]);
 
   if (!arenaItems.length) {
     return (
@@ -182,9 +191,10 @@ export default function ArenaMatch({ items, roomCode, viewer }: ArenaMatchProps)
     );
   }
 
-  const eliminated = snapshot.players[snapshot.eliminatedPlayerId];
-  const localItem = playerItem(localPlayer);
-  const eliminatedItem = eliminated ? playerItem(eliminated) : undefined;
+  const localItem = stateItem(localPlayer.item);
+  const hittingItem = snapshot.impactItem.id
+    ? stateItem(snapshot.impactItem)
+    : undefined;
   const localWasHit = snapshot.phase === "round-over" && snapshot.eliminatedPlayerId === viewer.id;
 
   return (
@@ -215,8 +225,8 @@ export default function ArenaMatch({ items, roomCode, viewer }: ArenaMatchProps)
         <div className="arena-sync-error" role="status">Reconnecting to Colyseus…</div>
       ) : null}
       {realtime.error ? <div className="arena-sync-error" role="alert">{realtime.error}</div> : null}
-      {localWasHit && eliminatedItem ? (
-        <MemoryFlash item={eliminatedItem} ownerName={eliminated?.name || viewer.name} />
+      {localWasHit && hittingItem ? (
+        <MemoryFlash item={hittingItem} ownerName={opponent.name} />
       ) : null}
     </div>
   );

@@ -38,6 +38,8 @@ export async function loadArenaSession(roomCode: string, userId: string) {
         id: uploads.id,
         memoryLabel: uploads.fileName,
         name: uploads.keyObject,
+        sourceType: uploads.fileType,
+        sourceUrl: uploads.fileUrl,
       })
       .from(uploads)
       .where(and(
@@ -59,6 +61,9 @@ export async function loadArenaSession(roomCode: string, userId: string) {
       id: item.id,
       name: item.name,
       memoryLabel: item.memoryLabel,
+      ...(item.sourceType.startsWith("image/")
+        ? { originalImageUrl: item.sourceUrl }
+        : {}),
       ...(isMemoryModelFileType(item.artifactType)
         ? { modelUrl: item.artifactUrl }
         : { imageUrl: item.artifactUrl }),

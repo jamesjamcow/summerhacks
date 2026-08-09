@@ -6,6 +6,7 @@ export type ArenaTicketItem = {
   memoryLabel: string;
   imageUrl?: string;
   modelUrl?: string;
+  originalImageUrl?: string;
 };
 
 export type ArenaTicketPayload = {
@@ -47,6 +48,7 @@ function isTicketItem(value: unknown): value is ArenaTicketItem {
   return text(item.id, 64) && text(item.name, 100) && text(item.memoryLabel, 300) &&
     (item.imageUrl === undefined || text(item.imageUrl, 2_048)) &&
     (item.modelUrl === undefined || text(item.modelUrl, 2_048)) &&
+    (item.originalImageUrl === undefined || text(item.originalImageUrl, 2_048)) &&
     (Boolean(item.imageUrl) || Boolean(item.modelUrl));
 }
 

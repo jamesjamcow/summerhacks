@@ -1,11 +1,21 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { MemoryModelPreview } from "@/components/memory-model-preview";
-import { UploadDropzone } from "@/lib/uploadthing";
+import { uploadFiles } from "@/lib/uploadthing";
 import type { MemoryArtifact } from "@/lib/memory-artifacts";
+
+const MAX_FILES = 5;
+const MAX_PARALLEL_UPLOADS = 3;
+const ACCEPTED_FILE_TYPES = "image/*,audio/*,.pdf,text/*,.txt,.md,.csv,.json,.xml";
+
+type UploadResult = Awaited<ReturnType<typeof uploadFiles<"workspaceFile">>>[number];
+
+function generationResult(result: UploadResult) {
+  return result.serverData;
+}
 
 export function UploadPanel({
   onArtifactsGenerated,
@@ -17,66 +27,169 @@ export function UploadPanel({
   roomCode?: string;
 }) {
   const router = useRouter();
+  const inputRef = useRef<HTMLInputElement>(null);
   const [message, setMessage] = useState<string>();
   const [artifacts, setArtifacts] = useState<MemoryArtifact[]>([]);
-  const [selectedCount, setSelectedCount] = useState(0);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [finishedCount, setFinishedCount] = useState(0);
+
+  function chooseFiles(files: File[]) {
+    if (files.length > MAX_FILES) {
+      setSelectedFiles([]);
+      setMessage(`Choose no more than ${MAX_FILES} memories at a time.`);
+      return;
+    }
+
+    setSelectedFiles(files);
+    setFinishedCount(0);
+    setMessage(undefined);
+  }
+
+  function addCompletedArtifact(artifact: MemoryArtifact) {
+    setArtifacts((current) => {
+      const byId = new Map(current.map((item) => [item.id, item]));
+      byId.set(artifact.id, artifact);
+      return Array.from(byId.values());
+    });
+    onArtifactsGenerated?.([artifact]);
+  }
+
+  async function uploadSelectedFiles() {
+    if (!selectedFiles.length || isUploading) return;
+
+    const files = [...selectedFiles];
+    const results: Array<UploadResult | Error> = new Array(files.length);
+    let nextIndex = 0;
+
+    setIsUploading(true);
+    setFinishedCount(0);
+    setMessage(
+      `Uploading and building ${files.length} ${files.length === 1 ? "memory" : "memories"} in parallel…`,
+    );
+
+    async function worker() {
+      while (nextIndex < files.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+
+        try {
+          const [result] = await uploadFiles("workspaceFile", {
+            files: [files[index]],
+            input: {
+              recipientUserId: recipientUserId ?? null,
+              roomCode: roomCode ?? null,
+            },
+          });
+
+          if (!result) {
+            throw new Error(`${files[index].name} did not return an upload result.`);
+          }
+
+          results[index] = result;
+          const serverData = generationResult(result);
+          if (serverData.status === "complete") {
+            addCompletedArtifact(serverData.artifact);
+          }
+        } catch (error) {
+          results[index] = error instanceof Error
+            ? error
+            : new Error(`${files[index].name} could not be uploaded.`);
+        } finally {
+          setFinishedCount((current) => current + 1);
+        }
+      }
+    }
+
+    await Promise.all(
+      Array.from(
+        { length: Math.min(MAX_PARALLEL_UPLOADS, files.length) },
+        () => worker(),
+      ),
+    );
+
+    const completed = results.filter(
+      (result): result is UploadResult =>
+        !(result instanceof Error) && generationResult(result).status === "complete",
+    );
+    const generationFailures = results.flatMap((result) => {
+      if (result instanceof Error) return [result.message];
+      const serverData = generationResult(result);
+      return serverData.status === "failed" ? [serverData.error] : [];
+    });
+
+    setMessage(
+      generationFailures.length
+        ? `${completed.length} ${completed.length === 1 ? "keepsake" : "keepsakes"} ready. ${generationFailures.length} failed: ${generationFailures[0]}`
+        : `${completed.length} ${completed.length === 1 ? "keepsake is" : "keepsakes are"} ready.`,
+    );
+    setSelectedFiles([]);
+    setIsUploading(false);
+    if (inputRef.current) inputRef.current.value = "";
+    router.refresh();
+  }
 
   return (
     <div>
-      <UploadDropzone
-        endpoint="workspaceFile"
-        input={{
-          recipientUserId: recipientUserId ?? null,
-          roomCode: roomCode ?? null,
+      <div
+        className={`parallel-upload-dropzone${isDragging ? " is-dragging" : ""}`}
+        onDragEnter={(event) => {
+          event.preventDefault();
+          if (!isUploading) setIsDragging(true);
         }}
-        content={{
-          label: "Choose memories or drag and drop",
-          allowedContent: "Up to 5 images, voice notes, PDFs, or text files",
-          button: ({ isUploading }) =>
-            isUploading ? "Building 3D keepsakes…" : "Choose files",
-        }}
-        onChange={(files) => {
-          setSelectedCount(files.length);
-          setMessage(undefined);
-        }}
-        onUploadBegin={() => {
-          setMessage(
-            `Uploading and building ${selectedCount || 1} ${
-              (selectedCount || 1) === 1 ? "memory" : "memories"
-            }…`,
-          );
-        }}
-        onClientUploadComplete={(files) => {
-          const completed = files.flatMap((file) =>
-            file.serverData.status === "complete" ? [file.serverData.artifact] : [],
-          );
-          const failures = files.filter(
-            (file) => file.serverData.status === "failed",
-          );
-          const firstFailure = failures[0]?.serverData;
-
-          if (completed.length) {
-            setArtifacts((current) => {
-              const byId = new Map(current.map((artifact) => [artifact.id, artifact]));
-              completed.forEach((artifact) => byId.set(artifact.id, artifact));
-              return Array.from(byId.values());
-            });
-            onArtifactsGenerated?.(completed);
+        onDragLeave={(event) => {
+          const nextTarget = event.relatedTarget;
+          if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+            setIsDragging(false);
           }
-
-          setMessage(
-            failures.length
-              ? `${completed.length} ${completed.length === 1 ? "keepsake" : "keepsakes"} ready. ${
-                  firstFailure?.status === "failed"
-                    ? firstFailure.error
-                    : `${failures.length} could not be built.`
-                }`
-              : `${completed.length} ${completed.length === 1 ? "keepsake is" : "keepsakes are"} ready.`,
-          );
-          router.refresh();
         }}
-        onUploadError={(error) => setMessage(error.message)}
-      />
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          event.preventDefault();
+          setIsDragging(false);
+          if (!isUploading) chooseFiles(Array.from(event.dataTransfer.files));
+        }}
+        aria-busy={isUploading}
+      >
+        <svg aria-hidden="true" className="parallel-upload-icon" viewBox="0 0 20 20">
+          <path
+            clipRule="evenodd"
+            d="M5.5 17a4.5 4.5 0 0 1-1.44-8.765a4.5 4.5 0 0 1 8.302-3.046a3.5 3.5 0 0 1 4.504 4.272A4 4 0 0 1 15 17H5.5Zm3.75-2.75a.75.75 0 0 0 1.5 0V9.66l1.95 2.1a.75.75 0 1 0 1.1-1.02l-3.25-3.5a.75.75 0 0 0-1.1 0l-3.25 3.5a.75.75 0 1 0 1.1 1.02l1.95-2.1v4.59Z"
+            fill="currentColor"
+            fillRule="evenodd"
+          />
+        </svg>
+        <label className="parallel-upload-label">
+          <input
+            ref={inputRef}
+            accept={ACCEPTED_FILE_TYPES}
+            className="sr-only"
+            disabled={isUploading}
+            multiple
+            onChange={(event) => chooseFiles(Array.from(event.currentTarget.files ?? []))}
+            type="file"
+          />
+          Choose memories or drag and drop
+        </label>
+        <span className="parallel-upload-help">
+          {selectedFiles.length
+            ? `${selectedFiles.length} ${selectedFiles.length === 1 ? "file" : "files"} selected`
+            : "Up to 5 images, voice notes, PDFs, or text files"}
+        </span>
+        <button
+          className="parallel-upload-button"
+          disabled={!selectedFiles.length || isUploading}
+          onClick={uploadSelectedFiles}
+          type="button"
+        >
+          {isUploading
+            ? `Building ${finishedCount}/${selectedFiles.length}…`
+            : selectedFiles.length
+              ? `Upload ${selectedFiles.length} ${selectedFiles.length === 1 ? "file" : "files"}`
+              : "Choose files"}
+        </button>
+      </div>
       {message ? (
         <p className="upload-message" role="status">
           {message}

@@ -4,6 +4,8 @@ export type MemoryArtifact = {
   artifactModelUrl?: string;
   /** Legacy image artifacts remain readable after the 3D pipeline migration. */
   artifactImageUrl?: string;
+  /** The original UploadThing image that Gemini analyzed, when the source was an image. */
+  originalImageUrl?: string;
   originalMemory: string;
   addedBy: string;
   recipientId: string;

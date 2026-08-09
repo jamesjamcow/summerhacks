@@ -2,6 +2,7 @@ export type ArenaItem = {
   id: string;
   modelUrl?: string;
   imageUrl?: string;
+  originalImageUrl?: string;
   memoryLabel: string;
   name: string;
 };

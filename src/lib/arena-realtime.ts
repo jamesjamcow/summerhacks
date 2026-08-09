@@ -6,6 +6,7 @@ export const ArenaItemState = schema({
   memoryLabel: "string",
   imageUrl: "string",
   modelUrl: "string",
+  originalImageUrl: "string",
 });
 export type ArenaItemState = SchemaType<typeof ArenaItemState>;
 
@@ -21,6 +22,8 @@ export const ArenaPlayerState = schema({
   health: "uint8",
   score: "uint8",
   connected: "boolean",
+  inventoryIndex: "uint8",
+  inventorySize: "uint8",
   item: ArenaItemState,
 });
 export type ArenaPlayerState = SchemaType<typeof ArenaPlayerState>;
@@ -34,6 +37,7 @@ export const ArenaProjectileState = schema({
   vx: "float32",
   vy: "float32",
   vz: "float32",
+  item: ArenaItemState,
 });
 export type ArenaProjectileState = SchemaType<typeof ArenaProjectileState>;
 
@@ -45,6 +49,7 @@ export const ArenaState = schema({
   winnerId: "string",
   eliminatedPlayerId: "string",
   resultReason: "string",
+  impactItem: ArenaItemState,
   players: { map: ArenaPlayerState, default: new Map() },
   projectiles: { map: ArenaProjectileState, default: new Map() },
 });
@@ -69,12 +74,15 @@ export type ArenaPlayerSnapshot = {
   health: number;
   score: number;
   connected: boolean;
+  inventoryIndex: number;
+  inventorySize: number;
   item: {
     id: string;
     name: string;
     memoryLabel: string;
     imageUrl: string;
     modelUrl: string;
+    originalImageUrl: string;
   };
 };
 
@@ -87,6 +95,7 @@ export type ArenaProjectileSnapshot = {
   vx: number;
   vy: number;
   vz: number;
+  item: ArenaPlayerSnapshot["item"];
 };
 
 export type ArenaRealtimeSnapshot = {
@@ -97,11 +106,21 @@ export type ArenaRealtimeSnapshot = {
   winnerId: string;
   eliminatedPlayerId: string;
   resultReason: "score" | "forfeit" | "";
+  impactItem: ArenaPlayerSnapshot["item"];
   players: Record<string, ArenaPlayerSnapshot>;
   projectiles: Record<string, ArenaProjectileSnapshot>;
 };
 
 export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
+  const itemSnapshot = (item: ArenaItemState): ArenaPlayerSnapshot["item"] => ({
+    id: item.id,
+    name: item.name,
+    memoryLabel: item.memoryLabel,
+    imageUrl: item.imageUrl,
+    modelUrl: item.modelUrl,
+    originalImageUrl: item.originalImageUrl,
+  });
+
   return {
     roomCode: state.roomCode,
     phase: state.phase as ArenaRealtimePhase,
@@ -110,6 +129,7 @@ export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
     winnerId: state.winnerId,
     eliminatedPlayerId: state.eliminatedPlayerId,
     resultReason: state.resultReason as ArenaRealtimeSnapshot["resultReason"],
+    impactItem: itemSnapshot(state.impactItem),
     players: Object.fromEntries(Array.from(state.players.entries()).map(([id, player]) => [
       id,
       {
@@ -124,13 +144,9 @@ export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
         health: player.health,
         score: player.score,
         connected: player.connected,
-        item: {
-          id: player.item.id,
-          name: player.item.name,
-          memoryLabel: player.item.memoryLabel,
-          imageUrl: player.item.imageUrl,
-          modelUrl: player.item.modelUrl,
-        },
+        inventoryIndex: player.inventoryIndex,
+        inventorySize: player.inventorySize,
+        item: itemSnapshot(player.item),
       },
     ])),
     projectiles: Object.fromEntries(Array.from(state.projectiles.entries()).map(([id, projectile]) => [
@@ -144,6 +160,7 @@ export function snapshotArenaState(state: ArenaState): ArenaRealtimeSnapshot {
         vx: projectile.vx,
         vy: projectile.vy,
         vz: projectile.vz,
+        item: itemSnapshot(projectile.item),
       },
     ])),
   };

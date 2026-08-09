@@ -4,10 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 import { MemoryModelPreview } from "@/components/memory-model-preview";
-import {
-  FALLBACK_MEMORY_MODEL,
-  type MemoryModelSpec,
-} from "@/lib/memory-model";
 import type {
   ArenaPlayerSnapshot,
   ArenaProjectileSnapshot,
@@ -18,6 +14,7 @@ import { createMemoryModel, disposeMemoryModel } from "@/lib/three-memory-model"
 import {
   getPreloadedArenaImage,
   getPreloadedArenaModel,
+  preloadArenaAssets,
 } from "./arena-assets";
 import type { ArenaItem } from "./arena-types";
 import type { ArenaInputMessage } from "./use-colyseus-arena";
@@ -40,32 +37,11 @@ type ProjectileVisual = {
 
 const PLAYER_HEIGHT = 1.65;
 
-function makeCardTexture(imageUrl?: string) {
-  const preloaded = imageUrl ? getPreloadedArenaImage(imageUrl) : undefined;
-  if (preloaded) {
-    const texture = new THREE.Texture(preloaded);
-    texture.needsUpdate = true;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    return texture;
-  }
-
-  const canvas = document.createElement("canvas");
-  canvas.width = 512;
-  canvas.height = 512;
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Canvas 2D is unavailable.");
-  context.fillStyle = "#fff1bc";
-  context.fillRect(0, 0, 512, 512);
-  context.strokeStyle = "#ef5d4d";
-  context.lineWidth = 26;
-  context.strokeRect(18, 18, 476, 476);
-  context.fillStyle = "#27234e";
-  context.textAlign = "center";
-  context.font = "900 168px Georgia";
-  context.fillText("♥", 256, 280);
-  context.font = "700 43px Arial";
-  context.fillText("MEMORY", 256, 405);
-  const texture = new THREE.CanvasTexture(canvas);
+function makeCardTexture(imageUrl: string) {
+  const preloaded = getPreloadedArenaImage(imageUrl);
+  if (!preloaded) return undefined;
+  const texture = new THREE.Texture(preloaded);
+  texture.needsUpdate = true;
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
@@ -140,12 +116,22 @@ function createOpponent(name: string) {
   };
 }
 
-function projectileVisual(item?: ArenaPlayerSnapshot["item"]): ProjectileVisual {
-  const modelSpec: MemoryModelSpec | undefined = item?.modelUrl
-    ? getPreloadedArenaModel(item.modelUrl)
-    : undefined;
-  if (item?.modelUrl) {
-    const object = createMemoryModel(modelSpec ?? FALLBACK_MEMORY_MODEL, 0.9);
+function arenaItem(item: ArenaPlayerSnapshot["item"]): ArenaItem {
+  return {
+    id: item.id,
+    imageUrl: item.imageUrl || undefined,
+    memoryLabel: item.memoryLabel,
+    modelUrl: item.modelUrl || undefined,
+    name: item.name,
+    originalImageUrl: item.originalImageUrl || undefined,
+  };
+}
+
+function projectileVisual(item: ArenaProjectileSnapshot["item"]): ProjectileVisual | undefined {
+  if (item.modelUrl) {
+    const modelSpec = getPreloadedArenaModel(item.modelUrl);
+    if (!modelSpec) return undefined;
+    const object = createMemoryModel(modelSpec, 0.9);
     return {
       dispose: () => disposeMemoryModel(object),
       object,
@@ -153,7 +139,9 @@ function projectileVisual(item?: ArenaPlayerSnapshot["item"]): ProjectileVisual 
     };
   }
 
-  const texture = makeCardTexture(item?.imageUrl || undefined);
+  if (!item.imageUrl) return undefined;
+  const texture = makeCardTexture(item.imageUrl);
+  if (!texture) return undefined;
   const material = new THREE.MeshBasicMaterial({
     map: texture,
     side: THREE.DoubleSide,
@@ -189,7 +177,6 @@ export default function ArenaGame({
   const shootHandlerRef = useRef(onShoot);
   const previousHealthRef = useRef(localPlayer.health);
   const [locked, setLocked] = useState(false);
-  const [throws, setThrows] = useState(12);
   const [hitFlash, setHitFlash] = useState(false);
 
   useEffect(() => { activeRef.current = active; }, [active]);
@@ -264,12 +251,22 @@ export default function ArenaGame({
     const opponentModel = createOpponent(initialOpponent.name);
     scene.add(opponentModel.group);
     const projectileVisuals = new Map<string, ProjectileVisual>();
+    const requestedProjectileAssets = new Set<string>();
+    const requestProjectileAsset = (projectileItem: ArenaProjectileSnapshot["item"]) => {
+      const assetKey = projectileItem.modelUrl || projectileItem.imageUrl;
+      if (!assetKey || requestedProjectileAssets.has(assetKey)) return;
+      if (
+        (projectileItem.modelUrl && getPreloadedArenaModel(projectileItem.modelUrl)) ||
+        (projectileItem.imageUrl && getPreloadedArenaImage(projectileItem.imageUrl))
+      ) return;
+      requestedProjectileAssets.add(assetKey);
+      void preloadArenaAssets([arenaItem(projectileItem)]).catch(() => undefined);
+    };
     const keys = new Set<string>();
     const clock = new THREE.Clock();
     let yaw = initialLocalPlayer.yaw;
     let pitch = initialLocalPlayer.pitch;
     let lastInputAt = 0;
-    let ammo = 12;
 
     const resize = () => {
       const { clientWidth, clientHeight } = mount;
@@ -294,8 +291,6 @@ export default function ArenaGame({
       }
       if (event.button !== 0) return;
       shootHandlerRef.current();
-      ammo = ammo > 1 ? ammo - 1 : 12;
-      setThrows(ammo);
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -341,13 +336,17 @@ export default function ArenaGame({
         opponentModel.group.rotation.y = currentOpponent.yaw;
         opponentModel.group.visible = currentOpponent.health > 0;
       }
+      Object.values(playersRef.current).forEach((player) => requestProjectileAsset(player.item));
 
       const snapshots = projectilesRef.current;
       Object.values(snapshots).forEach((projectile) => {
         let visual = projectileVisuals.get(projectile.id);
         if (!visual) {
-          const owner = playersRef.current[projectile.ownerId];
-          visual = projectileVisual(owner?.item);
+          visual = projectileVisual(projectile.item);
+          if (!visual) {
+            requestProjectileAsset(projectile.item);
+            return;
+          }
           visual.ownerId = projectile.ownerId;
           visual.object.position.set(projectile.x, projectile.y, projectile.z);
           projectileVisuals.set(projectile.id, visual);
@@ -391,7 +390,7 @@ export default function ArenaGame({
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [item.imageUrl, item.modelUrl, localPlayer.userId, opponent?.item.imageUrl, opponent?.item.modelUrl, opponent?.name, opponent?.userId]);
+  }, [localPlayer.userId, opponent?.name, opponent?.userId]);
 
   return (
     <div className={hitFlash ? "arena-game is-hit" : "arena-game"} ref={mountRef}>
@@ -417,7 +416,10 @@ export default function ArenaGame({
           >♥</div>
         )}
       </div>
-      <div className="arena-ammo"><small>MEMORIES</small><strong>{throws}<span>/12</span></strong></div>
+      <div className="arena-ammo">
+        <small>MEMORY LOOP</small>
+        <strong>{localPlayer.inventoryIndex + 1}<span>/{localPlayer.inventorySize}</span></strong>
+      </div>
       <div className="arena-controls"><span>W A S D</span> move <span>CLICK</span> throw <span>ESC</span> cursor</div>
       {!locked && active ? (
         <button

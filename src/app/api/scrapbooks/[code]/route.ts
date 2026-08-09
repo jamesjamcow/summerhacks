@@ -53,6 +53,8 @@ export async function GET(
     .select({
       clerkUserId: uploads.clerkUserId,
       fileName: uploads.fileName,
+      fileType: uploads.fileType,
+      fileUrl: uploads.fileUrl,
       generatedFileUrl: uploads.generatedFileUrl,
       generatedFileType: uploads.generatedFileType,
       id: uploads.id,
@@ -92,6 +94,9 @@ export async function GET(
       ...(isMemoryModelFileType(upload.generatedFileType)
         ? { artifactModelUrl: upload.generatedFileUrl }
         : { artifactImageUrl: upload.generatedFileUrl }),
+      ...(upload.fileType.startsWith("image/")
+        ? { originalImageUrl: upload.fileUrl }
+        : {}),
       id: upload.id,
       name: upload.keyObject,
       originalMemory: upload.fileName,

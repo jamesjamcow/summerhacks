@@ -172,6 +172,9 @@ export const uploadRouter = {
             id: sourceUpload.id,
             name: generated.keyObject,
             artifactModelUrl: storedArtifact.data.ufsUrl,
+            ...(file.type.startsWith("image/")
+              ? { originalImageUrl: file.ufsUrl }
+              : {}),
             originalMemory: file.name,
             addedBy: "You",
             recipientId: metadata.recipientUserId,

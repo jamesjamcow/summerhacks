@@ -71,6 +71,7 @@ function stateItem(item: ArenaTicketItem) {
     memoryLabel: item.memoryLabel,
     modelUrl: item.modelUrl || "",
     name: item.name,
+    originalImageUrl: item.originalImageUrl || "",
   });
 }
 
@@ -81,6 +82,18 @@ function emptyStateItem() {
     memoryLabel: "",
     modelUrl: "",
     name: "memory",
+    originalImageUrl: "",
+  });
+}
+
+function copyStateItem(item: ArenaItemState) {
+  return new ArenaItemState({
+    id: item.id,
+    imageUrl: item.imageUrl,
+    memoryLabel: item.memoryLabel,
+    modelUrl: item.modelUrl,
+    name: item.name,
+    originalImageUrl: item.originalImageUrl,
   });
 }
 
@@ -95,6 +108,7 @@ export class ArenaRoom extends Room<{
 
   state = new ArenaState({
     eliminatedPlayerId: "",
+    impactItem: emptyStateItem(),
     phase: "waiting",
     phaseEndsAt: 0,
     resultReason: "",
@@ -105,6 +119,7 @@ export class ArenaRoom extends Room<{
 
   private readonly inputByUser = new Map<string, ArenaInput>();
   private readonly inventoryByUser = new Map<string, ArenaTicketItem[]>();
+  private readonly inventoryCursorByUser = new Map<string, number>();
   private readonly lastShotAt = new Map<string, number>();
   private readonly projectileRuntime = new Map<string, ProjectileRuntime>();
 
@@ -154,6 +169,8 @@ export class ArenaRoom extends Room<{
       avatarUrl: ticket.avatarUrl || "",
       connected: true,
       health: 100,
+      inventoryIndex: 0,
+      inventorySize: ticket.inventory.length,
       item: emptyStateItem(),
       name: ticket.name,
       pitch: 0,
@@ -167,6 +184,7 @@ export class ArenaRoom extends Room<{
 
     client.userData = { userId: ticket.userId };
     this.inventoryByUser.set(ticket.userId, ticket.inventory);
+    this.inventoryCursorByUser.set(ticket.userId, 0);
     this.inputByUser.set(ticket.userId, { ...EMPTY_INPUT, yaw: spawn.yaw });
     this.state.players.set(ticket.userId, player);
     this.equipPlayer(player);
@@ -227,6 +245,7 @@ export class ArenaRoom extends Room<{
     const id = randomUUID();
     const projectile = new ArenaProjectileState({
       id,
+      item: copyStateItem(player.item),
       ownerId: userId,
       vx,
       vy,
@@ -237,6 +256,7 @@ export class ArenaRoom extends Room<{
     });
     this.state.projectiles.set(id, projectile);
     this.projectileRuntime.set(id, { age: 0, expiresAt: now + 2_500 });
+    this.advanceInventory(player);
   }
 
   private updateWorld(deltaTimeMs: number) {
@@ -265,9 +285,9 @@ export class ArenaRoom extends Room<{
 
     this.state.round += 1;
     this.state.eliminatedPlayerId = "";
+    this.state.impactItem = emptyStateItem();
     this.state.players.forEach((player) => {
       player.health = 100;
-      this.equipPlayer(player);
     });
     this.positionPlayersAtSpawns();
     this.state.phase = "countdown";
@@ -325,7 +345,7 @@ export class ArenaRoom extends Room<{
         )
       );
       if (victim) {
-        this.resolveHit(projectile.ownerId, victim.userId, now);
+        this.resolveHit(projectile.ownerId, victim.userId, projectile.item, now);
         return;
       }
     }
@@ -361,7 +381,12 @@ export class ArenaRoom extends Room<{
       closestY <= ARENA_PLAYER_HEIGHT + 0.25;
   }
 
-  private resolveHit(killerId: string, victimId: string, now: number) {
+  private resolveHit(
+    killerId: string,
+    victimId: string,
+    impactItem: ArenaItemState,
+    now: number,
+  ) {
     if (this.state.phase !== "playing") return;
     const killer = this.state.players.get(killerId);
     const victim = this.state.players.get(victimId);
@@ -370,6 +395,7 @@ export class ArenaRoom extends Room<{
     victim.health = 0;
     killer.score += 1;
     this.state.eliminatedPlayerId = victimId;
+    this.state.impactItem = copyStateItem(impactItem);
     if (killer.score >= ARENA_ROUNDS_TO_WIN) {
       this.state.winnerId = killerId;
       this.state.resultReason = "score";
@@ -384,9 +410,11 @@ export class ArenaRoom extends Room<{
     this.state.winnerId = "";
     this.state.resultReason = "";
     this.state.eliminatedPlayerId = "";
+    this.state.impactItem = emptyStateItem();
     this.state.players.forEach((player) => {
       player.health = 100;
       player.score = 0;
+      this.inventoryCursorByUser.set(player.userId, 0);
       this.equipPlayer(player);
     });
     this.positionPlayersAtSpawns();
@@ -396,8 +424,19 @@ export class ArenaRoom extends Room<{
 
   private equipPlayer(player: ArenaPlayerState) {
     const inventory = this.inventoryByUser.get(player.userId) || [];
-    const item = inventory[(Math.max(this.state.round, 1) - 1) % Math.max(inventory.length, 1)];
+    const cursor = this.inventoryCursorByUser.get(player.userId) || 0;
+    const item = inventory[cursor % Math.max(inventory.length, 1)];
+    player.inventoryIndex = item ? cursor % inventory.length : 0;
+    player.inventorySize = inventory.length;
     player.item = item ? stateItem(item) : emptyStateItem();
+  }
+
+  private advanceInventory(player: ArenaPlayerState) {
+    const inventory = this.inventoryByUser.get(player.userId) || [];
+    if (!inventory.length) return;
+    const nextCursor = ((this.inventoryCursorByUser.get(player.userId) || 0) + 1) % inventory.length;
+    this.inventoryCursorByUser.set(player.userId, nextCursor);
+    this.equipPlayer(player);
   }
 
   private positionPlayersAtSpawns() {
@@ -428,6 +467,7 @@ export class ArenaRoom extends Room<{
     player.connected = false;
     this.inputByUser.delete(userId);
     this.inventoryByUser.delete(userId);
+    this.inventoryCursorByUser.delete(userId);
     this.lastShotAt.delete(userId);
 
     const opponent = Array.from(this.state.players.values()).find((candidate) =>

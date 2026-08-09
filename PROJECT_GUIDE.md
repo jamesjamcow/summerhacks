@@ -21,8 +21,9 @@ deliberately small but exercises the full stack:
    notes and upload records.
 
 The application does not store passwords, sessions, or file bytes in Neon.
-Clerk owns identity/session data. UploadThing owns file bytes. Neon stores
-application records and UploadThing metadata.
+Clerk owns identity/session data. UploadThing owns both the original memory file
+and generated artifact bytes. Neon stores application records and UploadThing
+metadata, including the original file URL used by image hit reveals.
 
 ## Technology and responsibilities
 
@@ -240,11 +241,15 @@ as JSON and uploading it through UploadThing. The browser constructs the actual
 Three.js object from that data; AI-authored JavaScript is never executed. Five
 source files therefore produce five independent 3D artifacts.
 
-The client waits for the callback's server data, renders completed artifacts in
-the upload panel immediately, and adds them to the selected recipient's memory
-chest. While a scrapbook is open, its authenticated room endpoint refreshes the
-member roster, avatars, and room-scoped inventories every three seconds, so each
-member sees uploads made by the others.
+For a multi-file selection, the client submits each source as an independent
+UploadThing request through a three-worker pool. Up to three complete pipelines
+(source transfer, callback, Gemini generation, artifact upload, and database
+update) therefore run concurrently, while failures remain isolated to their
+individual files. The client renders each completed artifact as soon as its job
+returns, adds it to the selected recipient's memory chest, and shows aggregate
+progress for the batch. While a scrapbook is open, its authenticated room
+endpoint refreshes the member roster, avatars, and room-scoped inventories every
+three seconds, so each member sees uploads made by the others.
 
 Current limitation: a source upload can succeed while Gemini or the generated
 model upload fails. That source row is retained with `processing_status =
@@ -277,8 +282,8 @@ the current player's generated character alongside the authenticated match UI.
 ## Scrapbook experience
 
 The root route authenticates with Clerk and passes only a serializable viewer
-ID, display name, initials, and generated character-avatar URL to the
-interactive book. Creating a scrapbook now
+ID, display name, greeting name, initials, and generated character-avatar URL
+to the interactive book. Creating a scrapbook now
 persists a room and owner membership. Joining by code upserts a membership for
 the authenticated Clerk user. The client polls the protected room endpoint for
 the durable member roster, so separate accounts and devices see one another in
@@ -295,8 +300,18 @@ Both players then inhabit the same map. Clients send only movement intent and
 aim; the Colyseus simulation owns positions, wall collision, projectiles, hit
 detection, countdowns, one-hit rounds, scores, respawns, reconnects, and
 forfeits. Schema patches replace the former HTTP polling and red-dot proxy hits.
-Each projectile uses its owner's equipped memory, and the remote player is a
-live avatar-bearing character at their synchronized transform.
+Each accepted throw uses the owner's currently equipped memory and immediately
+advances their server-owned inventory cursor. Every item is used once in upload
+inventory order before the cursor wraps to the first item, continuously across
+rounds. Projectiles retain the item they were created with even after the player
+advances to the next one. Each browser loads the model or image attached to that
+replicated projectile before drawing it instead of substituting the generic
+heart, so both players see the same thrown object. The remote player is a live
+avatar-bearing character at their synchronized transform. When an image-backed
+3D keepsake hits a player, that player sees the attacker's original UploadThing
+image for the projectile that actually landed during the round-end memory
+reveal.
+
 ## Server and client boundaries
 
 Pages and layouts remain Server Components by default. `upload-panel.tsx` is a

@@ -16,6 +16,11 @@ export default async function HomePage() {
     user.username ||
     user.primaryEmailAddress?.emailAddress.split("@")[0] ||
     "Memory keeper";
+  const greetingName =
+    user.username ||
+    user.firstName ||
+    name.split(/\s+/)[0] ||
+    "there";
   const initials = name
     .split(/\s+/)
     .map((part) => part[0])
@@ -36,6 +41,7 @@ export default async function HomePage() {
 
   return (
     <BookExperience
+      greetingName={greetingName}
       viewer={{
         id: user.id,
         initials,

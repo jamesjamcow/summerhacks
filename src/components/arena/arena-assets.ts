@@ -6,13 +6,17 @@ import {
 } from "@/lib/memory-model";
 
 const imageCache = new Map<string, HTMLImageElement>();
+const imageLoadCache = new Map<string, Promise<HTMLImageElement>>();
 const modelCache = new Map<string, MemoryModelSpec>();
+const modelLoadCache = new Map<string, Promise<MemoryModelSpec>>();
 
 function loadImage(url: string) {
   const cached = imageCache.get(url);
   if (cached?.complete && cached.naturalWidth > 0) return Promise.resolve(cached);
+  const pending = imageLoadCache.get(url);
+  if (pending) return pending;
 
-  return new Promise<HTMLImageElement>((resolve, reject) => {
+  const promise = new Promise<HTMLImageElement>((resolve, reject) => {
     const image = cached ?? new Image();
     image.decoding = "async";
     image.onload = () => {
@@ -26,14 +30,29 @@ function loadImage(url: string) {
     imageCache.set(url, image);
     if (!cached) image.src = url;
   });
+  imageLoadCache.set(url, promise);
+  void promise.then(
+    () => imageLoadCache.delete(url),
+    () => imageLoadCache.delete(url),
+  );
+  return promise;
 }
 
 async function loadModel(url: string) {
   const cached = modelCache.get(url);
   if (cached) return cached;
-  const spec = await fetchMemoryModelSpec(url);
-  modelCache.set(url, spec);
-  return spec;
+  const pending = modelLoadCache.get(url);
+  if (pending) return pending;
+  const promise = fetchMemoryModelSpec(url).then((spec) => {
+    modelCache.set(url, spec);
+    return spec;
+  });
+  modelLoadCache.set(url, promise);
+  void promise.then(
+    () => modelLoadCache.delete(url),
+    () => modelLoadCache.delete(url),
+  );
+  return promise;
 }
 
 export async function preloadArenaAssets(items: ArenaItem[]) {
@@ -50,7 +69,8 @@ export async function preloadArenaAssets(items: ArenaItem[]) {
 }
 
 export function getPreloadedArenaImage(url: string) {
-  return imageCache.get(url);
+  const image = imageCache.get(url);
+  return image?.complete && image.naturalWidth > 0 ? image : undefined;
 }
 
 export function getPreloadedArenaModel(url: string) {

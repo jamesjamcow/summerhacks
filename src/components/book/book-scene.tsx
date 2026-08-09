@@ -20,13 +20,20 @@ const OVERSCAN_CAMERA_FOV = 69.107;
 const PAGE_SEGMENTS = 48;
 const PAGE_SPRING_STRENGTH = 44;
 const PAGE_SPRING_DAMPING = 11.5;
+const BOOK_OPEN_DURATION = 1.65;
+
+type OpeningProgress = { current: number };
 
 type BookSceneProps = {
   currentSpread: number;
+  greetingName: string;
   dragPreview?: {
     direction: "next" | "previous";
     progress: number;
   };
+  interactive: boolean;
+  open: boolean;
+  onOpen: () => void;
   onPrevious: () => void;
   onNext: () => void;
 };
@@ -205,6 +212,37 @@ function drawPageContent(
     context.fillText(content.note, x, cursorY);
   }
 
+  if (content.navigation?.length) {
+    const rowHeight = 48;
+    const navTop = cursorY - 18;
+
+    context.strokeStyle = "rgba(53, 35, 26, 0.22)";
+    context.lineWidth = 1.5;
+    context.textAlign = "left";
+    context.textBaseline = "middle";
+    context.font = "700 16px Arial, Helvetica, sans-serif";
+    content.navigation.forEach((item, index) => {
+      const rowTop = navTop + index * rowHeight;
+
+      context.beginPath();
+      context.moveTo(x, rowTop);
+      context.lineTo(x + maxWidth, rowTop);
+      context.stroke();
+
+      context.fillStyle = index === 0 ? content.accent : "rgba(53, 35, 26, 0.68)";
+      context.fillText(item.toUpperCase(), x + 20, rowTop + rowHeight / 2);
+
+      if (index === 0) {
+        context.fillRect(x, rowTop + 9, 4, rowHeight - 18);
+      }
+    });
+
+    context.beginPath();
+    context.moveTo(x, navTop + content.navigation.length * rowHeight);
+    context.lineTo(x + maxWidth, navTop + content.navigation.length * rowHeight);
+    context.stroke();
+  }
+
   drawPageArtwork(context, content.artwork, content.accent, side);
   context.restore();
 }
@@ -290,6 +328,84 @@ function makeLeatherTexture() {
   return texture;
 }
 
+function makeCoverTexture() {
+  const canvas = document.createElement("canvas");
+  canvas.width = 768;
+  canvas.height = 1024;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Canvas 2D is unavailable.");
+
+  const leather = context.createRadialGradient(205, 238, 20, 380, 470, 720);
+  leather.addColorStop(0, "#754a35");
+  leather.addColorStop(0.46, "#4b2c20");
+  leather.addColorStop(1, "#24120d");
+  context.fillStyle = leather;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  const random = seededRandom("summerhacks-cover-face");
+  context.save();
+  context.globalAlpha = 0.13;
+  context.strokeStyle = "#e2a66f";
+  context.lineWidth = 1;
+  for (let ring = 0; ring < 150; ring += 1) {
+    const radius = 18 + ring * 7.5;
+    context.beginPath();
+    context.ellipse(
+      116 + Math.sin(ring * 0.19) * 7,
+      310 + Math.cos(ring * 0.13) * 9,
+      radius * 1.28,
+      radius,
+      -0.09,
+      0,
+      Math.PI * 2,
+    );
+    context.stroke();
+  }
+  context.restore();
+
+  for (let index = 0; index < 2600; index += 1) {
+    const alpha = 0.012 + random() * 0.035;
+    context.fillStyle = random() > 0.5
+      ? `rgba(255, 221, 178, ${alpha})`
+      : `rgba(18, 4, 2, ${alpha})`;
+    context.fillRect(random() * 768, random() * 1024, random() * 2 + 0.4, 0.7);
+  }
+
+  const gold = "rgba(244, 205, 155, 0.72)";
+  context.strokeStyle = gold;
+  context.lineWidth = 2;
+  roundedRect(context, 42, 38, 684, 948, 22);
+  context.stroke();
+
+  context.beginPath();
+  context.moveTo(548, 78);
+  context.lineTo(674, 78);
+  context.lineTo(674, 212);
+  context.moveTo(92, 936);
+  context.lineTo(92, 812);
+  context.lineTo(222, 812);
+  context.stroke();
+
+  context.textAlign = "center";
+  context.fillStyle = "rgba(249, 224, 190, 0.76)";
+  context.font = "700 19px Arial, Helvetica, sans-serif";
+  context.fillText("A  B O O K  O F  U S", 384, 366);
+
+  context.fillStyle = "#f7dfb9";
+  context.font = '500 70px Georgia, "Times New Roman", serif';
+  context.fillText("SCRAPBOOK", 384, 456);
+
+  context.fillStyle = "rgba(249, 228, 197, 0.78)";
+  context.font = 'italic 24px Georgia, "Times New Roman", serif';
+  context.fillText("Built by the people who remember you.", 384, 520);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 8;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 function usePageTexture(
   side: "left" | "right",
   content?: PageContent,
@@ -321,6 +437,90 @@ function useReducedMotion() {
   }, []);
 
   return reducedMotion;
+}
+
+function FoldingGroup({
+  children,
+  openingProgress,
+}: {
+  children: React.ReactNode;
+  openingProgress: OpeningProgress;
+}) {
+  const group = useRef<THREE.Group>(null);
+
+  useFrame(() => {
+    if (!group.current) return;
+    const eased = THREE.MathUtils.smootherstep(openingProgress.current, 0, 1);
+    group.current.rotation.y = Math.PI * (1 - eased);
+  });
+
+  return <group ref={group}>{children}</group>;
+}
+
+function FrontCover({
+  coverTexture,
+  interactive,
+  leatherTexture,
+  onOpen,
+  openingProgress,
+}: {
+  coverTexture: THREE.Texture;
+  interactive: boolean;
+  leatherTexture: THREE.Texture;
+  onOpen: () => void;
+  openingProgress: OpeningProgress;
+}) {
+  const group = useRef<THREE.Group>(null);
+  const [hovered, setHovered] = useState(false);
+
+  useEffect(() => {
+    if (!hovered || !interactive) return;
+    document.body.style.cursor = "pointer";
+    return () => {
+      document.body.style.cursor = "";
+    };
+  }, [hovered, interactive]);
+
+  useFrame(() => {
+    if (!group.current) return;
+    const eased = THREE.MathUtils.smootherstep(openingProgress.current, 0, 1);
+    group.current.rotation.y = -Math.PI * eased;
+    group.current.rotation.z = -Math.sin(eased * Math.PI) * 0.018;
+  });
+
+  return (
+    <group
+      onClick={
+        interactive
+          ? (event: ThreeEvent<MouseEvent>) => {
+              event.stopPropagation();
+              onOpen();
+            }
+          : undefined
+      }
+      onPointerOut={() => setHovered(false)}
+      onPointerOver={interactive ? () => setHovered(true) : undefined}
+      ref={group}
+    >
+      <RoundedBox
+        args={[PAGE_WIDTH + 0.18, PAGE_HEIGHT + 0.22, 0.14]}
+        castShadow
+        position={[PAGE_WIDTH / 2 + 0.045, 0, 0.19]}
+        radius={0.085}
+        smoothness={5}
+      >
+        <meshStandardMaterial map={leatherTexture} metalness={0.02} roughness={0.72} />
+      </RoundedBox>
+      <mesh castShadow position={[PAGE_WIDTH / 2 + 0.045, 0, 0.266]}>
+        <planeGeometry args={[PAGE_WIDTH + 0.02, PAGE_HEIGHT + 0.06]} />
+        <meshStandardMaterial map={coverTexture} roughness={0.79} />
+      </mesh>
+      <mesh position={[PAGE_WIDTH + 0.08, 0, 0.105]}>
+        <boxGeometry args={[0.022, PAGE_HEIGHT + 0.05, 0.17]} />
+        <meshStandardMaterial color="#c48c55" metalness={0.25} roughness={0.58} />
+      </mesh>
+    </group>
+  );
 }
 
 function StaticPage({
@@ -369,6 +569,8 @@ function PageLeaf({
   index,
   currentSpread,
   dragPreview,
+  interactionEnabled,
+  openingProgress,
   reducedMotion,
   onNext,
   onPrevious,
@@ -376,6 +578,8 @@ function PageLeaf({
   index: number;
   currentSpread: number;
   dragPreview?: BookSceneProps["dragPreview"];
+  interactionEnabled: boolean;
+  openingProgress: OpeningProgress;
   reducedMotion: boolean;
   onNext: () => void;
   onPrevious: () => void;
@@ -387,8 +591,8 @@ function PageLeaf({
   const turned = index < currentSpread;
   const isForwardPage = index === currentSpread;
   const isBackPage = index === currentSpread - 1;
-  const isInteractive = isForwardPage || isBackPage;
-  const progress = useRef(turned ? 1 : 0);
+  const isInteractive = interactionEnabled && (isForwardPage || isBackPage);
+  const progress = useRef(0);
   const velocity = useRef(0);
   const [hovered, setHovered] = useState(false);
 
@@ -414,12 +618,25 @@ function PageLeaf({
   useFrame((_, delta) => {
     if (!group.current || !frontMesh.current) return;
 
-    const settledTarget = turned ? 1 : 0;
+    const openingValue = openingProgress.current;
+    const openingLeafStart = 0.26 + index * 0.1;
+    const openingLeafProgress = THREE.MathUtils.clamp(
+      (openingValue - openingLeafStart) / (1 - openingLeafStart),
+      0,
+      1,
+    );
+    const isOpeningLeaf = openingValue < 0.999 && turned;
+    const settledTarget = isOpeningLeaf
+      ? THREE.MathUtils.smootherstep(openingLeafProgress, 0, 1)
+      : turned
+        ? 1
+        : 0;
     const isDraggedLeaf =
       (dragPreview?.direction === "next" && isForwardPage) ||
       (dragPreview?.direction === "previous" && isBackPage);
     const isBoundaryLeaf = turned ? isBackPage : isForwardPage;
-    const shouldInterpolate = isDraggedLeaf || (!dragPreview && isBoundaryLeaf);
+    const shouldInterpolate =
+      isOpeningLeaf || isDraggedLeaf || (!dragPreview && isBoundaryLeaf);
     let target = settledTarget;
 
     if (dragPreview?.direction === "next" && isForwardPage) {
@@ -535,8 +752,14 @@ function PageLeaf({
 
 function BookModel(props: BookSceneProps & { reducedMotion: boolean }) {
   const book = useRef<THREE.Group>(null);
+  const openingProgress = useRef(props.open ? 1 : 0);
   const { pointer, viewport } = useThree();
   const leatherTexture = useMemo(() => makeLeatherTexture(), []);
+  const coverTexture = useMemo(() => makeCoverTexture(), []);
+  const leftPageContent = useMemo(
+    () => ({ ...STATIC_LEFT_PAGE, title: `Hey, ${props.greetingName}!` }),
+    [props.greetingName],
+  );
   const scale =
     BOOK_SCALE_MULTIPLIER *
     Math.min(
@@ -545,40 +768,66 @@ function BookModel(props: BookSceneProps & { reducedMotion: boolean }) {
       viewport.height / (4.35 * CANVAS_OVERSCAN),
     );
 
-  useEffect(() => () => leatherTexture.dispose(), [leatherTexture]);
+  useEffect(
+    () => () => {
+      coverTexture.dispose();
+      leatherTexture.dispose();
+    },
+    [coverTexture, leatherTexture],
+  );
 
   useFrame((_, delta) => {
     if (!book.current) return;
+    const openingTarget = props.open ? 1 : 0;
+    if (props.reducedMotion) {
+      openingProgress.current = openingTarget;
+    } else if (openingProgress.current !== openingTarget) {
+      const direction = openingTarget > openingProgress.current ? 1 : -1;
+      openingProgress.current = THREE.MathUtils.clamp(
+        openingProgress.current + direction * (delta / BOOK_OPEN_DURATION),
+        0,
+        1,
+      );
+    }
+
+    const openingEase = THREE.MathUtils.smootherstep(openingProgress.current, 0, 1);
     const response = 1 - Math.exp(-delta * 2.8);
     const pointerScale = props.reducedMotion ? 0 : 1;
+    book.current.position.x = THREE.MathUtils.lerp(
+      book.current.position.x,
+      THREE.MathUtils.lerp(-PAGE_WIDTH / 2, 0, openingEase),
+      response,
+    );
     book.current.rotation.x = THREE.MathUtils.lerp(
       book.current.rotation.x,
-      -0.14 + pointer.y * 0.035 * pointerScale,
+      THREE.MathUtils.lerp(-0.08, -0.14, openingEase) +
+        pointer.y * 0.035 * pointerScale,
       response,
     );
     book.current.rotation.y = THREE.MathUtils.lerp(
       book.current.rotation.y,
-      pointer.x * 0.055 * pointerScale,
+      THREE.MathUtils.lerp(-0.09, 0, openingEase) +
+        pointer.x * 0.055 * pointerScale,
       response,
     );
     book.current.rotation.z = THREE.MathUtils.lerp(
       book.current.rotation.z,
-      -pointer.x * 0.018 * pointerScale,
+      THREE.MathUtils.lerp(-0.025, 0, openingEase) -
+        pointer.x * 0.018 * pointerScale,
       response,
     );
   });
 
   return (
-    <group ref={book} position={[0, -0.02, 0]} scale={scale}>
-      <RoundedBox
-        args={[PAGE_WIDTH + 0.18, PAGE_HEIGHT + 0.22, 0.14]}
-        castShadow
-        position={[-PAGE_WIDTH / 2 - 0.045, 0, -0.19]}
-        radius={0.085}
-        smoothness={5}
-      >
-        <meshStandardMaterial map={leatherTexture} metalness={0.02} roughness={0.74} />
-      </RoundedBox>
+    <group ref={book} position={[-PAGE_WIDTH / 2, -0.02, 0]} scale={scale}>
+      <FrontCover
+        coverTexture={coverTexture}
+        interactive={!props.open}
+        leatherTexture={leatherTexture}
+        onOpen={props.onOpen}
+        openingProgress={openingProgress}
+      />
+
       <RoundedBox
         args={[PAGE_WIDTH + 0.18, PAGE_HEIGHT + 0.22, 0.14]}
         castShadow
@@ -589,15 +838,37 @@ function BookModel(props: BookSceneProps & { reducedMotion: boolean }) {
         <meshStandardMaterial map={leatherTexture} metalness={0.02} roughness={0.74} />
       </RoundedBox>
 
-      <RoundedBox
-        args={[PAGE_WIDTH + 0.02, PAGE_HEIGHT + 0.04, 0.19]}
-        castShadow
-        position={[-PAGE_WIDTH / 2 - 0.006, 0, -0.075]}
-        radius={0.045}
-        smoothness={3}
-      >
-        <meshStandardMaterial color="#cfad79" roughness={0.95} />
-      </RoundedBox>
+      <FoldingGroup openingProgress={openingProgress}>
+        <RoundedBox
+          args={[PAGE_WIDTH + 0.02, PAGE_HEIGHT + 0.04, 0.19]}
+          castShadow
+          position={[-PAGE_WIDTH / 2 - 0.006, 0, -0.075]}
+          radius={0.045}
+          smoothness={3}
+        >
+          <meshStandardMaterial color="#cfad79" roughness={0.95} />
+        </RoundedBox>
+
+        {Array.from({ length: 7 }, (_, index) => (
+          <mesh
+            key={`left-${index}`}
+            position={[-PAGE_WIDTH / 2, 0, -0.125 + index * 0.026]}
+          >
+            <boxGeometry args={[PAGE_WIDTH - 0.035, PAGE_HEIGHT - 0.05, 0.009]} />
+            <meshStandardMaterial
+              color={index % 2 ? "#ead4a8" : "#f0ddba"}
+              roughness={1}
+            />
+          </mesh>
+        ))}
+
+        <StaticPage
+          content={leftPageContent}
+          onClick={props.interactive && props.currentSpread > 0 ? props.onPrevious : undefined}
+          side="left"
+        />
+      </FoldingGroup>
+
       <RoundedBox
         args={[PAGE_WIDTH + 0.02, PAGE_HEIGHT + 0.04, 0.19]}
         castShadow
@@ -609,16 +880,16 @@ function BookModel(props: BookSceneProps & { reducedMotion: boolean }) {
       </RoundedBox>
 
       {Array.from({ length: 7 }, (_, index) => (
-        <group key={index} position={[0, 0, -0.125 + index * 0.026]}>
-          <mesh position={[-PAGE_WIDTH / 2, 0, 0]}>
-            <boxGeometry args={[PAGE_WIDTH - 0.035, PAGE_HEIGHT - 0.05, 0.009]} />
-            <meshStandardMaterial color={index % 2 ? "#ead4a8" : "#f0ddba"} roughness={1} />
-          </mesh>
-          <mesh position={[PAGE_WIDTH / 2, 0, 0]}>
-            <boxGeometry args={[PAGE_WIDTH - 0.035, PAGE_HEIGHT - 0.05, 0.009]} />
-            <meshStandardMaterial color={index % 2 ? "#ead4a8" : "#f0ddba"} roughness={1} />
-          </mesh>
-        </group>
+        <mesh
+          key={`right-${index}`}
+          position={[PAGE_WIDTH / 2, 0, -0.125 + index * 0.026]}
+        >
+          <boxGeometry args={[PAGE_WIDTH - 0.035, PAGE_HEIGHT - 0.05, 0.009]} />
+          <meshStandardMaterial
+            color={index % 2 ? "#ead4a8" : "#f0ddba"}
+            roughness={1}
+          />
+        </mesh>
       ))}
 
       <mesh castShadow position={[0, 0, -0.135]} scale={[1, 1, 0.72]}>
@@ -626,20 +897,11 @@ function BookModel(props: BookSceneProps & { reducedMotion: boolean }) {
         <meshStandardMaterial map={leatherTexture} roughness={0.78} />
       </mesh>
 
-      <mesh position={[-PAGE_WIDTH - 0.08, 0, -0.105]}>
-        <boxGeometry args={[0.022, PAGE_HEIGHT + 0.05, 0.17]} />
-        <meshStandardMaterial color="#c48c55" metalness={0.25} roughness={0.58} />
-      </mesh>
       <mesh position={[PAGE_WIDTH + 0.08, 0, -0.105]}>
         <boxGeometry args={[0.022, PAGE_HEIGHT + 0.05, 0.17]} />
         <meshStandardMaterial color="#c48c55" metalness={0.25} roughness={0.58} />
       </mesh>
 
-      <StaticPage
-        content={STATIC_LEFT_PAGE}
-        onClick={props.currentSpread > 0 ? props.onPrevious : undefined}
-        side="left"
-      />
       <StaticPage side="right" />
 
       {PAGE_LEAVES.map((leaf, index) => (
@@ -647,9 +909,11 @@ function BookModel(props: BookSceneProps & { reducedMotion: boolean }) {
           currentSpread={props.currentSpread}
           dragPreview={props.dragPreview}
           index={index}
+          interactionEnabled={props.interactive}
           key={leaf.front.title}
           onNext={props.onNext}
           onPrevious={props.onPrevious}
+          openingProgress={openingProgress}
           reducedMotion={props.reducedMotion}
         />
       ))}
