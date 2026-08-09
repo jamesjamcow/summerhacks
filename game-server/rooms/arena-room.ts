@@ -4,7 +4,7 @@ import {
   Room,
   ServerError,
   type Client,
-} from "colyseus";
+} from "@colyseus/core";
 
 import {
   ArenaItemState,
