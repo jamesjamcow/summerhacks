@@ -53,12 +53,12 @@ type MemoryItem = MemoryArtifact & {
   ability?: string;
 };
 
-type ScrapbookOverlay = "upload" | "arena";
+type ScrapbookOverlay = "arena";
 type DragDirection = "next" | "previous";
 type DragPreview = { direction: DragDirection; progress: number };
 
 const DRAG_AXIS_SLOP = 8;
-const OPENING_SPREAD = Math.floor(TOTAL_SPREADS / 2);
+const OPENING_SPREAD = 0;
 
 function FinalPageActions({
   onCreate,
@@ -75,12 +75,18 @@ function FinalPageActions({
     >
       <div className="model-page-buttons">
         <button onClick={onCreate} type="button">
-          <span className="button-mark" aria-hidden="true">+</span>
-          Create a new page
+          <svg aria-hidden="true" className="model-page-button-icon" viewBox="0 0 96 96">
+            <path d="M25 13.5h34l14 14v55H25z" />
+            <path d="M59 13.5v14h14M48.5 42v25M36 54.5h25" />
+          </svg>
+          <span>Create a new page</span>
         </button>
         <button className="secondary" onClick={onJoin} type="button">
-          <span className="button-mark arrow" aria-hidden="true">→</span>
-          Join a page
+          <svg aria-hidden="true" className="model-page-button-icon" viewBox="0 0 96 96">
+            <path d="M45 13.5h24l14 14v55H45z" />
+            <path d="M69 13.5v14h14M13 52h45M46 40l12 12-12 12" />
+          </svg>
+          <span>Join a page</span>
         </button>
       </div>
     </article>
@@ -288,7 +294,7 @@ function InventoryItemCard({ item }: { item: MemoryItem }) {
           style={item.artifactImageUrl ? { backgroundImage: `url(${item.artifactImageUrl})` } : undefined}
         />
       )}
-      <div>
+      <div className="inventory-item-details">
         <h4>{item.name}</h4>
         {item.ability ? <p>{item.ability}</p> : null}
         {item.originalMemory ? <small>{item.originalMemory}</small> : null}
@@ -298,72 +304,20 @@ function InventoryItemCard({ item }: { item: MemoryItem }) {
   );
 }
 
-function UploadMemoryOverlay({
-  recipient,
-  roomCode,
-  onArtifactsGenerated,
-  onClose,
-}: {
-  recipient: Viewer;
-  roomCode: string;
-  onArtifactsGenerated: (artifacts: MemoryArtifact[]) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="scrapbook-overlay" role="presentation" onMouseDown={onClose}>
-      <section
-        aria-labelledby="upload-memory-title"
-        aria-modal="true"
-        className="scrapbook-modal upload-memory-modal"
-        role="dialog"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <button className="scrapbook-modal-close" onClick={onClose} aria-label="Close upload memory" type="button">×</button>
-        <header className="overlay-heading">
-          <p>For {recipient.name}</p>
-          <h2 id="upload-memory-title">Upload a memory</h2>
-          <span>Every file becomes one generated 3D object for {recipient.name}’s collection.</span>
-        </header>
-
-        <div className="memory-flow-steps" aria-label="Memory upload steps">
-          <span className="active"><strong>1</strong> Add memories</span>
-          <span><strong>2</strong> Build 3D keepsakes</span>
-          <span><strong>3</strong> Attach to {recipient.name}</span>
-        </div>
-
-        <div className="scrapbook-uploader modal-uploader" data-recipient-id={recipient.id}>
-          <UploadPanel
-            onArtifactsGenerated={onArtifactsGenerated}
-            recipientUserId={recipient.id}
-            roomCode={roomCode}
-          />
-        </div>
-
-        <section className="memory-recipient" aria-labelledby="recipient-title">
-          <span className="memory-step">Recipient selected</span>
-          <h3 id="recipient-title">{recipient.name}</h3>
-          <p>
-            One memory makes one object. Finished keepsakes appear in this
-            member’s inventory automatically.
-          </p>
-        </section>
-      </section>
-    </div>
-  );
-}
-
 function SelectedMemberProfile({
   currentUserId,
   items,
   member,
+  onArtifactsGenerated,
   onAvatarGenerated,
-  onUpload,
+  roomCode,
 }: {
   currentUserId: string;
   items: MemoryItem[];
   member: Viewer;
+  onArtifactsGenerated: (artifacts: MemoryArtifact[]) => void;
   onAvatarGenerated: (avatarUrl: string) => void;
-  onUpload: () => void;
+  roomCode: string;
 }) {
   const isCurrentUser = member.id === currentUserId;
 
@@ -395,34 +349,17 @@ function SelectedMemberProfile({
         <div className="inventory-grid profile-inventory-grid">
           {items.map((item) => <InventoryItemCard item={item} key={item.id} />)}
         </div>
-      ) : !isCurrentUser ? (
-        <div className="profile-empty-inventory">
-          <div className="profile-empty-mark" aria-hidden="true">✦</div>
-          <div>
-            <h3>No keepsakes yet.</h3>
-            <p>Add a memory to start their collection.</p>
-          </div>
-        </div>
       ) : null}
 
       {!isCurrentUser ? (
-        <div className="profile-memory-action">
-          <button className="memory-upload-ticket" onClick={onUpload} type="button">
-            <span className="memory-upload-ticket-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24">
-                <path d="M12 15V4m0 0L8.5 7.5M12 4l3.5 3.5M5.5 14.5v3.25A2.25 2.25 0 0 0 7.75 20h8.5a2.25 2.25 0 0 0 2.25-2.25V14.5" />
-              </svg>
-            </span>
-            <span className="memory-upload-ticket-copy">
-              <small>Contribute a keepsake</small>
-              <strong>Add a memory for {member.name}</strong>
-              <span>Photos, voice notes, PDFs or text files</span>
-            </span>
-            <span className="memory-upload-ticket-cta" aria-hidden="true">
-              <span>Upload</span>
-              <b>↗</b>
-            </span>
-          </button>
+        <div className={`profile-memory-action${items.length ? "" : " is-empty"}`}>
+          <UploadPanel
+            onArtifactsGenerated={onArtifactsGenerated}
+            recipientName={member.name}
+            recipientUserId={member.id}
+            roomCode={roomCode}
+            variant="ticket"
+          />
         </div>
       ) : null}
 
@@ -489,7 +426,7 @@ function ArenaOverlay({
           />
         ) : (
           <div className="arena-entry-curtain" role="status" aria-live="polite">
-            <span onAnimationEnd={() => setEntranceComplete(true)}>Arena</span>
+            <span onAnimationEnd={() => setEntranceComplete(true)}>Memory Arena</span>
           </div>
         )}
       </section>
@@ -708,8 +645,9 @@ function Scrapbook({
                 (artifact) => artifact.recipientId === selectedMember.id,
               )}
               member={selectedMember}
+              onArtifactsGenerated={addArtifacts}
               onAvatarGenerated={handleAvatarGenerated}
-              onUpload={() => setOverlay("upload")}
+              roomCode={session.code}
             />
           ) : selectedPage ? (
             <>
@@ -740,17 +678,6 @@ function Scrapbook({
         </div>
       </div>
 
-      {overlay === "upload" && selectedMember
-        ? createPortal(
-            <UploadMemoryOverlay
-              recipient={selectedMember}
-              roomCode={session.code}
-              onArtifactsGenerated={addArtifacts}
-              onClose={() => setOverlay(undefined)}
-            />,
-            document.body,
-          )
-        : null}
       {overlay === "arena"
         ? createPortal(
             <ArenaOverlay
@@ -1011,7 +938,7 @@ export function BookExperience({
                 </div>
               </div>
               <p className="book-instructions" id="book-instructions">
-                Drag or click a page to flip · Arrow keys also work
+                Flick, drag, or click a page to flip · Arrow keys also work
               </p>
               <p className="sr-only" aria-live="polite">{progressLabel}</p>
             </>

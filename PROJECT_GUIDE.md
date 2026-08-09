@@ -227,8 +227,12 @@ types and limits, not private user records.
 
 ## Upload flow
 
-The browser renders a typed `UploadDropzone` from `src/lib/uploadthing.ts` and
-passes the active room code and selected recipient for scrapbook uploads.
+The browser uses the typed `uploadFiles` helper from `src/lib/uploadthing.ts`.
+On another member's profile, the large upload ticket is the file control: it
+accepts drag-and-drop or opens the native file chooser, then begins processing
+the selected files without opening a separate scrapbook page or modal. The
+dashboard keeps the two-step choose-then-upload panel. Both variants pass the
+active room code and selected recipient for scrapbook uploads.
 The `workspaceFile` route accepts batches of up to five total files across these
 supported categories:
 

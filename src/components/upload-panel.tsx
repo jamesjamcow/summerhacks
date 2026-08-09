@@ -19,12 +19,16 @@ function generationResult(result: UploadResult) {
 
 export function UploadPanel({
   onArtifactsGenerated,
+  recipientName,
   recipientUserId,
   roomCode,
+  variant = "dropzone",
 }: {
   onArtifactsGenerated?: (artifacts: MemoryArtifact[]) => void;
+  recipientName?: string;
   recipientUserId?: string;
   roomCode?: string;
+  variant?: "dropzone" | "ticket";
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -39,12 +43,13 @@ export function UploadPanel({
     if (files.length > MAX_FILES) {
       setSelectedFiles([]);
       setMessage(`Choose no more than ${MAX_FILES} memories at a time.`);
-      return;
+      return false;
     }
 
     setSelectedFiles(files);
     setFinishedCount(0);
     setMessage(undefined);
+    return files.length > 0;
   }
 
   function addCompletedArtifact(artifact: MemoryArtifact) {
@@ -56,10 +61,10 @@ export function UploadPanel({
     onArtifactsGenerated?.([artifact]);
   }
 
-  async function uploadSelectedFiles() {
-    if (!selectedFiles.length || isUploading) return;
+  async function uploadSelectedFiles(filesToUpload = selectedFiles) {
+    if (!filesToUpload.length || isUploading) return;
 
-    const files = [...selectedFiles];
+    const files = [...filesToUpload];
     const results: Array<UploadResult | Error> = new Array(files.length);
     let nextIndex = 0;
 
@@ -130,6 +135,75 @@ export function UploadPanel({
     router.refresh();
   }
 
+  if (variant === "ticket") {
+    const recipientLabel = recipientName ?? "this member";
+
+    return (
+      <div className="direct-memory-upload">
+        <input
+          ref={inputRef}
+          accept={ACCEPTED_FILE_TYPES}
+          aria-label={`Choose memories for ${recipientLabel}`}
+          className="sr-only"
+          disabled={isUploading}
+          multiple
+          onChange={(event) => {
+            const files = Array.from(event.currentTarget.files ?? []);
+            if (chooseFiles(files)) void uploadSelectedFiles(files);
+          }}
+          type="file"
+        />
+        <button
+          aria-describedby={message ? "direct-memory-upload-status" : undefined}
+          aria-busy={isUploading}
+          className={`memory-upload-ticket${isDragging ? " is-dragging" : ""}`}
+          disabled={isUploading}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            if (!isUploading) setIsDragging(true);
+          }}
+          onDragLeave={(event) => {
+            const nextTarget = event.relatedTarget;
+            if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+              setIsDragging(false);
+            }
+          }}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => {
+            event.preventDefault();
+            setIsDragging(false);
+            const files = Array.from(event.dataTransfer.files);
+            if (!isUploading && chooseFiles(files)) void uploadSelectedFiles(files);
+          }}
+          onClick={() => inputRef.current?.click()}
+          type="button"
+        >
+          <span className="memory-upload-ticket-copy">
+            <strong>{isUploading ? `Building ${finishedCount}/${selectedFiles.length}…` : "Upload file"}</strong>
+            <span>
+              {isUploading
+                ? `Creating ${selectedFiles.length === 1 ? "a keepsake" : "keepsakes"} for ${recipientLabel}`
+                : "Drag or drop your files here or click to upload"}
+            </span>
+          </span>
+          <span className="memory-upload-ticket-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 15V4m0 0L8.5 7.5M12 4l3.5 3.5M5.5 14.5v3.25A2.25 2.25 0 0 0 7.75 20h8.5a2.25 2.25 0 0 0 2.25-2.25V14.5" />
+            </svg>
+          </span>
+          <span className="memory-upload-ticket-cta" aria-hidden="true">
+            {isUploading ? "Uploading" : `Add for ${recipientLabel}`}
+          </span>
+        </button>
+        {message ? (
+          <p className="upload-message" id="direct-memory-upload-status" role="status">
+            {message}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
     <div>
       <div
@@ -180,7 +254,7 @@ export function UploadPanel({
         <button
           className="parallel-upload-button"
           disabled={!selectedFiles.length || isUploading}
-          onClick={uploadSelectedFiles}
+          onClick={() => void uploadSelectedFiles()}
           type="button"
         >
           {isUploading
